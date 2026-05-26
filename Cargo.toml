@@ -1,0 +1,52 @@
+[package]
+name = "mini-horta"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mini-horta"
+path = "src/main.rs"
+
+[dependencies]
+# Runtime async
+tokio = { version = "1", features = ["full"] }
+
+# Servidor HTTP
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+
+# Banco de dados
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "postgres", "uuid", "chrono", "migrate"] }
+
+# Autenticação
+jsonwebtoken = "9"
+bcrypt = "0.15"
+
+# Serial (Arduino)
+serialport = "4"
+
+# Serialização
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs e datas
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Variáveis de ambiente
+dotenvy = "0.15"
+
+# Erros
+thiserror = "1"
+anyhow = "1"
+
+# Logs
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# FIX: `typed-header` habilita TypedHeader e axum_extra::headers
+axum-extra = { version = "0.9", features = ["typed-header"] }
+
+[dev-dependencies]
+axum-test = "14"
