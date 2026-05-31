@@ -6,15 +6,62 @@ use crate::models::{
     IrrigationLog, IrrigationTrigger, Plant, SensorReading, User, UserRole,
 };
 
-/// Wrapper em torno do pool SQLx.
-/// Troca SqlitePool por PgPool bastando mudar este alias e DATABASE_URL.
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
 }
 
+/// Parseia DateTime tolerando:
+/// - RFC3339 padrão:               "2026-05-31T07:47:57+00:00"
+/// - RFC3339 com nanoseg. extras:  "2026-05-31T07:47:57.177941400+00:00"
+/// - Formato SQLite legado:        "2026-05-31 07:47:57" / "2026-05-31 07:47:57.123456"
+fn parse_dt(s: &str) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
+    // 1. RFC3339 padrão
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&chrono::Utc));
+    }
+
+    // 2. RFC3339 com nanosegundos extras (>6 dígitos)
+    if s.contains('T') {
+        let truncated = if let Some(dot) = s.find('.') {
+            let end = s[dot + 1..].find(['+', '-', 'Z']).map(|i| dot + 1 + i).unwrap_or(s.len());
+            let nanos = &s[dot + 1..end];
+            if nanos.len() > 6 {
+                format!("{}.{}{}", &s[..dot], &nanos[..6], &s[end..])
+            } else {
+                s.to_string()
+            }
+        } else {
+            s.to_string()
+        };
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&truncated) {
+            return Ok(dt.with_timezone(&chrono::Utc));
+        }
+    }
+
+    // 3. Formato SQLite sem timezone: "2026-05-31 07:47:57" ou "2026-05-31 07:47:57.123456"
+    let fmt = if s.contains('.') { "%Y-%m-%d %H:%M:%S%.f" } else { "%Y-%m-%d %H:%M:%S" };
+    chrono::NaiveDateTime::parse_from_str(s, fmt)
+        .map(|ndt| ndt.and_utc())
+        .map_err(|e| anyhow::anyhow!("Data inválida '{}': {}", s, e))
+}
+
+/// Parseia UUID com ou sem hífens (SQLite às vezes armazena sem hífens).
+fn parse_uuid(s: &str) -> anyhow::Result<uuid::Uuid> {
+    uuid::Uuid::parse_str(s).or_else(|_| {
+        if s.len() == 32 {
+            let formatted = format!(
+                "{}-{}-{}-{}-{}",
+                &s[0..8], &s[8..12], &s[12..16], &s[16..20], &s[20..32]
+            );
+            uuid::Uuid::parse_str(&formatted).map_err(Into::into)
+        } else {
+            anyhow::bail!("UUID inválido: {s}")
+        }
+    })
+}
+
 impl Database {
-    /// Conecta ao banco via DATABASE_URL e aplica migrations da pasta ./migrations/
     pub async fn connect() -> anyhow::Result<Self> {
         let url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite:./horta.db?mode=rwc".to_string());
@@ -41,7 +88,6 @@ impl Database {
         password_hash: &str,
         role: &UserRole,
     ) -> anyhow::Result<User> {
-        // FIX 1: era `i64::new_v4()` — UUID não tem nada a ver com i64.
         let id = Uuid::new_v4().to_string();
         let role_str = match role {
             UserRole::Admin => "admin",
@@ -49,34 +95,28 @@ impl Database {
         };
         let now = Utc::now().to_rfc3339();
 
-        // FIX 2: SQLite armazena UUID como TEXT; query! retorna String,
-        // então convertemos manualmente em vez de depender do cast `as "id: Uuid"`.
         let row = sqlx::query!(
             r#"
             INSERT INTO users (id, email, password_hash, role, created_at)
             VALUES (?, ?, ?, ?, ?)
             RETURNING
-                id        as "id!",
-                email     as "email!",
+                id            as "id!",
+                email         as "email!",
                 password_hash as "password_hash!",
-                role      as "role!",
-                created_at as "created_at!"
+                role          as "role!",
+                created_at    as "created_at!"
             "#,
-            id,
-            email,
-            password_hash,
-            role_str,
-            now,
+            id, email, password_hash, role_str, now,
         )
         .fetch_one(&self.pool)
         .await?;
 
         Ok(User {
-            id: Uuid::parse_str(&row.id)?,
+            id: parse_uuid(&row.id)?,
             email: row.email,
             password_hash: row.password_hash,
             role: row.role.parse()?,
-            created_at: row.created_at.parse()?,
+            created_at: parse_dt(&row.created_at)?,
         })
     }
 
@@ -98,11 +138,11 @@ impl Database {
 
         row.map(|r| {
             Ok(User {
-                id: Uuid::parse_str(&r.id)?,
+                id: parse_uuid(&r.id)?,
                 email: r.email,
                 password_hash: r.password_hash,
                 role: r.role.parse()?,
-                created_at: r.created_at.parse()?,
+                created_at: parse_dt(&r.created_at)?,
             })
         })
         .transpose()
@@ -119,7 +159,6 @@ impl Database {
         created_by: Uuid,
     ) -> anyhow::Result<Plant> {
         let id = Uuid::new_v4().to_string();
-        // FIX 2: Uuid deve ser serializado como String para SQLite
         let created_by_str = created_by.to_string();
         let now = Utc::now().to_rfc3339();
 
@@ -142,13 +181,13 @@ impl Database {
         .await?;
 
         Ok(Plant {
-            id: Uuid::parse_str(&row.id)?,
+            id: parse_uuid(&row.id)?,
             name: row.name,
             description: row.description,
             humidity_min: row.humidity_min,
             humidity_max: row.humidity_max,
-            created_by: Uuid::parse_str(&row.created_by)?,
-            created_at: row.created_at.parse()?,
+            created_by: parse_uuid(&row.created_by)?,
+            created_at: parse_dt(&row.created_at)?,
         })
     }
 
@@ -172,13 +211,13 @@ impl Database {
         rows.into_iter()
             .map(|r| {
                 Ok(Plant {
-                    id: Uuid::parse_str(&r.id)?,
+                    id: parse_uuid(&r.id)?,
                     name: r.name,
                     description: r.description,
                     humidity_min: r.humidity_min,
                     humidity_max: r.humidity_max,
-                    created_by: Uuid::parse_str(&r.created_by)?,
-                    created_at: r.created_at.parse()?,
+                    created_by: parse_uuid(&r.created_by)?,
+                    created_at: parse_dt(&r.created_at)?,
                 })
             })
             .collect()
@@ -205,13 +244,45 @@ impl Database {
 
         row.map(|r| {
             Ok(Plant {
-                id: Uuid::parse_str(&r.id)?,
+                id: parse_uuid(&r.id)?,
                 name: r.name,
                 description: r.description,
                 humidity_min: r.humidity_min,
                 humidity_max: r.humidity_max,
-                created_by: Uuid::parse_str(&r.created_by)?,
-                created_at: r.created_at.parse()?,
+                created_by: parse_uuid(&r.created_by)?,
+                created_at: parse_dt(&r.created_at)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn find_plant_by_name(&self, name: &str) -> anyhow::Result<Option<Plant>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                id          as "id!",
+                name        as "name!",
+                description,
+                humidity_min,
+                humidity_max,
+                created_by  as "created_by!",
+                created_at  as "created_at!"
+            FROM plants WHERE LOWER(name) = LOWER(?)
+            "#,
+            name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| {
+            Ok(Plant {
+                id: parse_uuid(&r.id)?,
+                name: r.name,
+                description: r.description,
+                humidity_min: r.humidity_min,
+                humidity_max: r.humidity_max,
+                created_by: parse_uuid(&r.created_by)?,
+                created_at: parse_dt(&r.created_at)?,
             })
         })
         .transpose()
@@ -246,11 +317,11 @@ impl Database {
         .await?;
 
         Ok(SensorReading {
-            id: Uuid::parse_str(&row.id)?,
-            plant_id: Uuid::parse_str(&row.plant_id)?,
+            id: parse_uuid(&row.id)?,
+            plant_id: parse_uuid(&row.plant_id)?,
             humidity: row.humidity,
             light_lux: row.light_lux,
-            read_at: row.read_at.parse()?,
+            read_at: parse_dt(&row.read_at)?,
         })
     }
 
@@ -275,11 +346,11 @@ impl Database {
 
         row.map(|r| {
             Ok(SensorReading {
-                id: Uuid::parse_str(&r.id)?,
-                plant_id: Uuid::parse_str(&r.plant_id)?,
+                id: parse_uuid(&r.id)?,
+                plant_id: parse_uuid(&r.plant_id)?,
                 humidity: r.humidity,
                 light_lux: r.light_lux,
-                read_at: r.read_at.parse()?,
+                read_at: parse_dt(&r.read_at)?,
             })
         })
         .transpose()
@@ -312,11 +383,11 @@ impl Database {
         rows.into_iter()
             .map(|r| {
                 Ok(SensorReading {
-                    id: Uuid::parse_str(&r.id)?,
-                    plant_id: Uuid::parse_str(&r.plant_id)?,
+                    id: parse_uuid(&r.id)?,
+                    plant_id: parse_uuid(&r.plant_id)?,
                     humidity: r.humidity,
                     light_lux: r.light_lux,
-                    read_at: r.read_at.parse()?,
+                    read_at: parse_dt(&r.read_at)?,
                 })
             })
             .collect()
@@ -336,8 +407,6 @@ impl Database {
             IrrigationTrigger::Auto => "auto",
             IrrigationTrigger::Manual => "manual",
         };
-        // FIX 2: SQLite só conhece i64 para INTEGER — cast explícito aqui
-        // evita o erro "expected i64, found i32" que o sqlx emite em compile time.
         let duration_sec = duration_sec as i64;
         let now = Utc::now().to_rfc3339();
 
@@ -358,12 +427,11 @@ impl Database {
         .await?;
 
         Ok(IrrigationLog {
-            id: Uuid::parse_str(&row.id)?,
-            plant_id: Uuid::parse_str(&row.plant_id)?,
+            id: parse_uuid(&row.id)?,
+            plant_id: parse_uuid(&row.plant_id)?,
             triggered_by: row.triggered_by.parse()?,
-            // FIX 2: volta para i32 se o modelo exige — o banco entrega i64
             duration_sec: row.duration_sec as i32,
-            started_at: row.started_at.parse()?,
+            started_at: parse_dt(&row.started_at)?,
         })
     }
 
@@ -394,11 +462,113 @@ impl Database {
         rows.into_iter()
             .map(|r| {
                 Ok(IrrigationLog {
-                    id: Uuid::parse_str(&r.id)?,
-                    plant_id: Uuid::parse_str(&r.plant_id)?,
+                    id: parse_uuid(&r.id)?,
+                    plant_id: parse_uuid(&r.plant_id)?,
                     triggered_by: r.triggered_by.parse()?,
                     duration_sec: r.duration_sec as i32,
-                    started_at: r.started_at.parse()?,
+                    started_at: parse_dt(&r.started_at)?,
+                })
+            })
+            .collect()
+    }
+
+    // ── Hortas ─────────────────────────────────────────────────────────────────
+
+    pub async fn create_horta(
+        &self,
+        code: &str,
+        plant_id: Uuid,
+        owner_id: Uuid,
+    ) -> anyhow::Result<crate::models::Horta> {
+        let id         = Uuid::new_v4().to_string();
+        let plant_id_s = plant_id.to_string();
+        let owner_id_s = owner_id.to_string();
+        let now        = Utc::now().to_rfc3339();
+
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO hortas (id, code, plant_id, owner_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING
+                id         as "id!",
+                code       as "code!",
+                plant_id   as "plant_id!",
+                owner_id   as "owner_id!",
+                created_at as "created_at!"
+            "#,
+            id, code, plant_id_s, owner_id_s, now
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(crate::models::Horta {
+            id:         parse_uuid(&row.id)?,
+            code:       row.code,
+            plant_id:   parse_uuid(&row.plant_id)?,
+            owner_id:   parse_uuid(&row.owner_id)?,
+            created_at: parse_dt(&row.created_at)?,
+        })
+    }
+
+    pub async fn find_horta_by_code(&self, code: &str) -> anyhow::Result<Option<crate::models::Horta>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                id         as "id!",
+                code       as "code!",
+                plant_id   as "plant_id!",
+                owner_id   as "owner_id!",
+                created_at as "created_at!"
+            FROM hortas WHERE code = ?
+            "#,
+            code
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| {
+            Ok(crate::models::Horta {
+                id:         parse_uuid(&r.id)?,
+                code:       r.code,
+                plant_id:   parse_uuid(&r.plant_id)?,
+                owner_id:   parse_uuid(&r.owner_id)?,
+                created_at: parse_dt(&r.created_at)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn list_hortas_by_owner(
+        &self,
+        owner_id: Uuid,
+    ) -> anyhow::Result<Vec<crate::models::HortaResponse>> {
+        let owner_s = owner_id.to_string();
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                h.id         as "id!",
+                h.code       as "code!",
+                h.owner_id   as "owner_id!",
+                h.created_at as "created_at!",
+                p.name       as "plant_name!"
+            FROM hortas h
+            JOIN plants p ON p.id = h.plant_id
+            WHERE h.owner_id = ?
+            ORDER BY h.created_at DESC
+            "#,
+            owner_s
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|r| {
+                Ok(crate::models::HortaResponse {
+                    id:         parse_uuid(&r.id)?,
+                    code:       r.code,
+                    plant_name: r.plant_name,
+                    owner_id:   parse_uuid(&r.owner_id)?,
+                    created_at: r.created_at,
                 })
             })
             .collect()

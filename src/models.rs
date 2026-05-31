@@ -19,8 +19,8 @@ impl FromStr for UserRole {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "admin" => Ok(Self::Admin),
-            "user" => Ok(Self::User),
-            other => anyhow::bail!("UserRole inválido: {other:?}"),
+            "user"  => Ok(Self::User),
+            other   => anyhow::bail!("UserRole inválido: {other:?}"),
         }
     }
 }
@@ -31,28 +31,25 @@ impl FromStr for UserRole {
 pub struct User {
     pub id: Uuid,
     pub email: String,
-    #[serde(skip_serializing)] // nunca expõe o hash
+    #[serde(skip_serializing)]
     pub password_hash: String,
     pub role: UserRole,
     pub created_at: DateTime<Utc>,
 }
 
-/// Payload de criação de conta
 #[derive(Debug, Deserialize)]
 pub struct CreateUserRequest {
     pub email: String,
     pub password: String,
-    pub role: Option<UserRole>, // apenas admins podem definir; padrão = User
+    pub role: Option<UserRole>,
 }
 
-/// Payload de login
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
-/// Resposta de login — retorna apenas o token
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
@@ -67,9 +64,7 @@ pub struct Plant {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
-    /// Percentual mínimo de umidade antes de acionar irrigação
     pub humidity_min: f64,
-    /// Percentual máximo (para desligar bomba)
     pub humidity_max: f64,
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
@@ -89,25 +84,25 @@ pub struct CreatePlantRequest {
 pub struct SensorReading {
     pub id: Uuid,
     pub plant_id: Uuid,
-    /// Percentual de umidade do solo (0.0 – 100.0)
     pub humidity: f64,
-    /// Luminosidade em lux (>= 0.0)
     pub light_lux: f64,
     pub read_at: DateTime<Utc>,
 }
 
 /// Formato JSON enviado pelo Arduino via serial:
-/// {"plant_id":"<uuid>","humidity":42.5,"light_lux":850.0}
+/// {"plant_name":"Manjericao","humidity":42.5,"light_lux":0.0}
 #[derive(Debug, Deserialize)]
 pub struct ArduinoPayload {
-    pub plant_id: Uuid,
+    pub plant_name: String,
     pub humidity: f64,
     pub light_lux: f64,
 }
 
 impl ArduinoPayload {
-    /// Validação de faixa dos valores do sensor
     pub fn validate(&self) -> Result<(), String> {
+        if self.plant_name.trim().is_empty() {
+            return Err("plant_name vazio".to_string());
+        }
         if !(0.0..=100.0).contains(&self.humidity) {
             return Err(format!("Umidade fora de faixa: {}", self.humidity));
         }
@@ -133,9 +128,9 @@ impl FromStr for IrrigationTrigger {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "auto" => Ok(Self::Auto),
+            "auto"   => Ok(Self::Auto),
             "manual" => Ok(Self::Manual),
-            other => anyhow::bail!("IrrigationTrigger inválido: {other:?}"),
+            other    => anyhow::bail!("IrrigationTrigger inválido: {other:?}"),
         }
     }
 }
@@ -153,4 +148,25 @@ pub struct IrrigationLog {
 pub struct ManualIrrigationRequest {
     pub plant_id: Uuid,
     pub duration_sec: i32,
+}
+
+// ── Horta ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Horta {
+    pub id: Uuid,
+    pub code: String,
+    pub plant_id: Uuid,
+    pub owner_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Resposta da API para operações de horta
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HortaResponse {
+    pub id: Uuid,
+    pub code: String,
+    pub plant_name: String,
+    pub owner_id: Uuid,
+    pub created_at: String,
 }
