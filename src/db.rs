@@ -61,6 +61,23 @@ fn parse_uuid(s: &str) -> anyhow::Result<uuid::Uuid> {
     })
 }
 
+
+fn normalize_plant_name(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            'á'|'à'|'â'|'ã'|'ä' => 'a',
+            'é'|'è'|'ê'|'ë'     => 'e',
+            'í'|'ì'|'î'|'ï'     => 'i',
+            'ó'|'ò'|'ô'|'õ'|'ö' => 'o',
+            'ú'|'ù'|'û'|'ü'     => 'u',
+            'ç'                  => 'c',
+            'ñ'                  => 'n',
+            other                => other,
+        })
+        .collect::<String>()
+        .to_lowercase()
+}
+
 impl Database {
     pub async fn connect() -> anyhow::Result<Self> {
         let url = std::env::var("DATABASE_URL")
@@ -156,26 +173,30 @@ impl Database {
         description: Option<&str>,
         humidity_min: f64,
         humidity_max: f64,
+        luz_horas_dia: f64,
         created_by: Uuid,
+        publica: bool,
     ) -> anyhow::Result<Plant> {
         let id = Uuid::new_v4().to_string();
         let created_by_str = created_by.to_string();
+        let publica_int: i64 = if publica { 1 } else { 0 };
         let now = Utc::now().to_rfc3339();
 
         let row = sqlx::query!(
             r#"
-            INSERT INTO plants (id, name, description, humidity_min, humidity_max, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO plants (id, name, description, humidity_min, humidity_max, luz_horas_dia, created_by, created_at, publica)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING
-                id          as "id!",
-                name        as "name!",
+                id            as "id!",
+                name          as "name!",
                 description,
                 humidity_min,
                 humidity_max,
-                created_by  as "created_by!",
-                created_at  as "created_at!"
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
             "#,
-            id, name, description, humidity_min, humidity_max, created_by_str, now
+            id, name, description, humidity_min, humidity_max, luz_horas_dia, created_by_str, now, publica_int
         )
         .fetch_one(&self.pool)
         .await?;
@@ -186,24 +207,30 @@ impl Database {
             description: row.description,
             humidity_min: row.humidity_min,
             humidity_max: row.humidity_max,
+            luz_horas_dia: row.luz_horas_dia,
             created_by: parse_uuid(&row.created_by)?,
             created_at: parse_dt(&row.created_at)?,
         })
     }
 
-    pub async fn list_plants(&self) -> anyhow::Result<Vec<Plant>> {
+    pub async fn list_plants(&self, user_id: Uuid) -> anyhow::Result<Vec<Plant>> {
+        let user_id_str = user_id.to_string();
         let rows = sqlx::query!(
             r#"
             SELECT
-                id          as "id!",
-                name        as "name!",
+                id            as "id!",
+                name          as "name!",
                 description,
                 humidity_min,
                 humidity_max,
-                created_by  as "created_by!",
-                created_at  as "created_at!"
-            FROM plants ORDER BY created_at DESC
-            "#
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
+            FROM plants
+            WHERE publica = 1 OR created_by = ?
+            ORDER BY created_at DESC
+            "#,
+            user_id_str
         )
         .fetch_all(&self.pool)
         .await?;
@@ -216,6 +243,7 @@ impl Database {
                     description: r.description,
                     humidity_min: r.humidity_min,
                     humidity_max: r.humidity_max,
+                    luz_horas_dia: r.luz_horas_dia,
                     created_by: parse_uuid(&r.created_by)?,
                     created_at: parse_dt(&r.created_at)?,
                 })
@@ -233,8 +261,9 @@ impl Database {
                 description,
                 humidity_min,
                 humidity_max,
-                created_by  as "created_by!",
-                created_at  as "created_at!"
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
             FROM plants WHERE id = ?
             "#,
             id_str
@@ -249,6 +278,7 @@ impl Database {
                 description: r.description,
                 humidity_min: r.humidity_min,
                 humidity_max: r.humidity_max,
+                luz_horas_dia: r.luz_horas_dia,
                 created_by: parse_uuid(&r.created_by)?,
                 created_at: parse_dt(&r.created_at)?,
             })
@@ -265,8 +295,9 @@ impl Database {
                 description,
                 humidity_min,
                 humidity_max,
-                created_by  as "created_by!",
-                created_at  as "created_at!"
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
             FROM plants WHERE LOWER(name) = LOWER(?)
             "#,
             name
@@ -281,6 +312,7 @@ impl Database {
                 description: r.description,
                 humidity_min: r.humidity_min,
                 humidity_max: r.humidity_max,
+                luz_horas_dia: r.luz_horas_dia,
                 created_by: parse_uuid(&r.created_by)?,
                 created_at: parse_dt(&r.created_at)?,
             })
@@ -295,6 +327,7 @@ impl Database {
         plant_id: Uuid,
         humidity: f64,
         light_lux: f64,
+        luz_ligada: i64,
     ) -> anyhow::Result<SensorReading> {
         let id = Uuid::new_v4().to_string();
         let plant_id_str = plant_id.to_string();
@@ -302,16 +335,17 @@ impl Database {
 
         let row = sqlx::query!(
             r#"
-            INSERT INTO sensor_readings (id, plant_id, humidity, light_lux, read_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sensor_readings (id, plant_id, humidity, light_lux, luz_ligada, read_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             RETURNING
-                id       as "id!",
-                plant_id as "plant_id!",
+                id         as "id!",
+                plant_id   as "plant_id!",
                 humidity,
                 light_lux,
-                read_at  as "read_at!"
+                luz_ligada as "luz_ligada!",
+                read_at    as "read_at!"
             "#,
-            id, plant_id_str, humidity, light_lux, now
+            id, plant_id_str, humidity, light_lux, luz_ligada, now
         )
         .fetch_one(&self.pool)
         .await?;
@@ -321,6 +355,7 @@ impl Database {
             plant_id: parse_uuid(&row.plant_id)?,
             humidity: row.humidity,
             light_lux: row.light_lux,
+            luz_ligada: row.luz_ligada,
             read_at: parse_dt(&row.read_at)?,
         })
     }
@@ -330,11 +365,12 @@ impl Database {
         let row = sqlx::query!(
             r#"
             SELECT
-                id       as "id!",
-                plant_id as "plant_id!",
+                id         as "id!",
+                plant_id   as "plant_id!",
                 humidity,
                 light_lux,
-                read_at  as "read_at!"
+                luz_ligada as "luz_ligada!",
+                read_at    as "read_at!"
             FROM sensor_readings
             WHERE plant_id = ?
             ORDER BY read_at DESC LIMIT 1
@@ -350,6 +386,7 @@ impl Database {
                 plant_id: parse_uuid(&r.plant_id)?,
                 humidity: r.humidity,
                 light_lux: r.light_lux,
+                luz_ligada: r.luz_ligada,
                 read_at: parse_dt(&r.read_at)?,
             })
         })
@@ -365,11 +402,12 @@ impl Database {
         let rows = sqlx::query!(
             r#"
             SELECT
-                id       as "id!",
-                plant_id as "plant_id!",
+                id         as "id!",
+                plant_id   as "plant_id!",
                 humidity,
                 light_lux,
-                read_at  as "read_at!"
+                luz_ligada as "luz_ligada!",
+                read_at    as "read_at!"
             FROM sensor_readings
             WHERE plant_id = ?
             ORDER BY read_at DESC LIMIT ?
@@ -387,6 +425,7 @@ impl Database {
                     plant_id: parse_uuid(&r.plant_id)?,
                     humidity: r.humidity,
                     light_lux: r.light_lux,
+                    luz_ligada: r.luz_ligada,
                     read_at: parse_dt(&r.read_at)?,
                 })
             })
@@ -400,20 +439,22 @@ impl Database {
         plant_id: Uuid,
         trigger: IrrigationTrigger,
         duration_sec: i32,
+        user_id: Option<Uuid>,
     ) -> anyhow::Result<IrrigationLog> {
         let id = Uuid::new_v4().to_string();
         let plant_id_str = plant_id.to_string();
+        let user_id_str  = user_id.map(|u| u.to_string());
         let trigger_str = match trigger {
             IrrigationTrigger::Auto => "auto",
             IrrigationTrigger::Manual => "manual",
         };
-        let duration_sec = duration_sec as i64;
+        let duration_sec_i = duration_sec as i64;
         let now = Utc::now().to_rfc3339();
 
         let row = sqlx::query!(
             r#"
-            INSERT INTO irrigation_logs (id, plant_id, triggered_by, duration_sec, started_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO irrigation_logs (id, plant_id, triggered_by, duration_sec, started_at, triggered_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             RETURNING
                 id           as "id!",
                 plant_id     as "plant_id!",
@@ -421,10 +462,19 @@ impl Database {
                 duration_sec,
                 started_at   as "started_at!"
             "#,
-            id, plant_id_str, trigger_str, duration_sec, now
+            id, plant_id_str, trigger_str, duration_sec_i, now, user_id_str
         )
         .fetch_one(&self.pool)
         .await?;
+
+        // Busca o e-mail do usuário se houver
+        let email = if let Some(uid) = user_id_str {
+            let u = sqlx::query!("SELECT email FROM users WHERE id = ?", uid)
+                .fetch_optional(&self.pool).await?;
+            u.map(|r| r.email)
+        } else {
+            None
+        };
 
         Ok(IrrigationLog {
             id: parse_uuid(&row.id)?,
@@ -432,6 +482,7 @@ impl Database {
             triggered_by: row.triggered_by.parse()?,
             duration_sec: row.duration_sec as i32,
             started_at: parse_dt(&row.started_at)?,
+            triggered_by_email: email,
         })
     }
 
@@ -444,14 +495,16 @@ impl Database {
         let rows = sqlx::query!(
             r#"
             SELECT
-                id           as "id!",
-                plant_id     as "plant_id!",
-                triggered_by as "triggered_by!",
-                duration_sec,
-                started_at   as "started_at!"
-            FROM irrigation_logs
-            WHERE plant_id = ?
-            ORDER BY started_at DESC LIMIT ?
+                l.id           as "id!",
+                l.plant_id     as "plant_id!",
+                l.triggered_by as "triggered_by!",
+                l.duration_sec,
+                l.started_at   as "started_at!",
+                u.email        as "triggered_by_email?"
+            FROM irrigation_logs l
+            LEFT JOIN users u ON u.id = l.triggered_by_user_id
+            WHERE l.plant_id = ?
+            ORDER BY l.started_at DESC LIMIT ?
             "#,
             plant_id_str,
             limit
@@ -467,6 +520,7 @@ impl Database {
                     triggered_by: r.triggered_by.parse()?,
                     duration_sec: r.duration_sec as i32,
                     started_at: parse_dt(&r.started_at)?,
+                    triggered_by_email: r.triggered_by_email,
                 })
             })
             .collect()
@@ -573,4 +627,342 @@ impl Database {
             })
             .collect()
     }
+
+    // ── Histórico de luz por planta ────────────────────────────────────────────
+
+    /// Abre um novo período de luz para a planta (luz ligou).
+    pub async fn luz_abrir_periodo(&self, plant_id: Uuid) -> anyhow::Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let plant_id_str = plant_id.to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"INSERT INTO luz_historico (id, plant_id, ligou_em) VALUES (?, ?, ?)"#,
+            id, plant_id_str, now
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Fecha o período de luz aberto da planta (luz desligou).
+    pub async fn luz_fechar_periodo(&self, plant_id: Uuid) -> anyhow::Result<()> {
+        let plant_id_str = plant_id.to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            UPDATE luz_historico
+            SET desligou_em = ?,
+                duracao_sec = CAST((julianday(?) - julianday(ligou_em)) * 86400 AS INTEGER)
+            WHERE plant_id = ? AND desligou_em IS NULL
+            "#,
+            now, now, plant_id_str
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Fecha todos os períodos abertos de todas as plantas (chamado à meia-noite).
+    pub async fn luz_fechar_todos_periodos(&self) -> anyhow::Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            UPDATE luz_historico
+            SET desligou_em = ?,
+                duracao_sec = CAST((julianday(?) - julianday(ligou_em)) * 86400 AS INTEGER)
+            WHERE desligou_em IS NULL
+            "#,
+            now, now
+        ).execute(&self.pool).await?;
+        tracing::info!("Meia-noite: todos os períodos de luz fechados");
+        Ok(())
+    }
+
+    /// Total de segundos de luz recebida hoje pela planta.
+    pub async fn luz_total_hoje(&self, plant_id: Uuid) -> anyhow::Result<i64> {
+        let plant_id_str = plant_id.to_string();
+        let row = sqlx::query!(
+            r#"
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN desligou_em IS NOT NULL THEN duracao_sec
+                    ELSE CAST((julianday('now') - julianday(ligou_em)) * 86400 AS INTEGER)
+                END
+            ), 0) as "total!"
+            FROM luz_historico
+            WHERE plant_id = ?
+              AND date(ligou_em) = date('now')
+            "#,
+            plant_id_str
+        ).fetch_one(&self.pool).await?;
+        Ok(row.total.into())
+    }
+
+    /// Histórico dos últimos N dias de luz da planta.
+    /// Retorna uma linha por dia com o total de segundos acumulados.
+    pub async fn luz_historico_dias(&self, plant_id: Uuid, dias: i64) -> anyhow::Result<Vec<serde_json::Value>> {
+        let plant_id_str = plant_id.to_string();
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                date(ligou_em)  as "dia!",
+                SUM(CASE
+                    WHEN desligou_em IS NOT NULL THEN duracao_sec
+                    ELSE CAST((julianday('now') - julianday(ligou_em)) * 86400 AS INTEGER)
+                END)            as "total_sec!"
+            FROM luz_historico
+            WHERE plant_id = ?
+              AND ligou_em >= datetime('now', '-' || ? || ' days')
+            GROUP BY date(ligou_em)
+            ORDER BY date(ligou_em) DESC
+            "#,
+            plant_id_str, dias
+        ).fetch_all(&self.pool).await?;
+
+        Ok(rows.into_iter().map(|r| serde_json::json!({
+            "dia":       r.dia,
+            "total_sec": r.total_sec,
+        })).collect())
+    }
+
+    /// Lista todas as plantas sem filtro — uso interno (WS, serial, buscas por nome).
+    pub async fn list_all_plants(&self) -> anyhow::Result<Vec<Plant>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                id            as "id!",
+                name          as "name!",
+                description,
+                humidity_min,
+                humidity_max,
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
+            FROM plants ORDER BY created_at DESC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|r| {
+                Ok(Plant {
+                    id: parse_uuid(&r.id)?,
+                    name: r.name,
+                    description: r.description,
+                    humidity_min: r.humidity_min,
+                    humidity_max: r.humidity_max,
+                    luz_horas_dia: r.luz_horas_dia,
+                    created_by: parse_uuid(&r.created_by)?,
+                    created_at: parse_dt(&r.created_at)?,
+                })
+            })
+            .collect()
+    }
+    /// Permite encontrar "Manjericao" e "Manjericão" como a mesma planta.
+    pub async fn find_plant_by_normalized_name(&self, normalized: &str) -> anyhow::Result<Option<Plant>> {
+        // Busca todas as plantas e filtra pelo nome normalizado em memória
+        // (SQLite não tem funções de normalização Unicode nativas)
+        let plants = self.list_all_plants().await?;
+        let found = plants.into_iter().find(|p| {
+            normalize_plant_name(&p.name) == normalized
+        });
+        Ok(found)
+    }
+
+    /// Atualiza a planta associada a uma horta.
+    pub async fn update_horta_plant(&self, horta_id: Uuid, plant_id: Uuid) -> anyhow::Result<()> {
+        let horta_id_str = horta_id.to_string();
+        let plant_id_str = plant_id.to_string();
+        sqlx::query!(
+            "UPDATE hortas SET plant_id = ? WHERE id = ?",
+            plant_id_str, horta_id_str
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Retorna true se a luz desta planta está ligada.
+    /// Usa a tabela plant_luz_status — independente das leituras do Arduino.
+    pub async fn get_luz_status(&self, plant_id: Uuid) -> anyhow::Result<bool> {
+        let plant_id_str = plant_id.to_string();
+        let row = sqlx::query!(
+            r#"SELECT ligada FROM plant_luz_status WHERE plant_id = ?"#,
+            plant_id_str
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.ligada == 1).unwrap_or(false))
+    }
+
+    /// Grava o estado de luz de uma planta (ligada/desligada).
+    /// Faz UPSERT — cria o registro se não existir.
+    pub async fn set_luz_status(&self, plant_id: Uuid, ligada: bool) -> anyhow::Result<()> {
+        let plant_id_str = plant_id.to_string();
+        let valor: i64   = if ligada { 1 } else { 0 };
+        let now          = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            INSERT INTO plant_luz_status (plant_id, ligada, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(plant_id) DO UPDATE SET ligada = excluded.ligada, updated_at = excluded.updated_at
+            "#,
+            plant_id_str, valor, now
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Compatibilidade: atualiza luz_ligada na sensor_reading mais recente.
+    /// Mantido para não quebrar código existente, mas o estado autoritativo
+    /// agora está em plant_luz_status.
+    pub async fn set_luz_ligada(&self, plant_id: Uuid, ligada: bool) -> anyhow::Result<()> {
+        // Delega para set_luz_status (fonte de verdade)
+        self.set_luz_status(plant_id, ligada).await?;
+
+        // Abre ou fecha o período de histórico em sincronia com o status,
+        // garantindo que luz_total_hoje nunca fique contabilizando com luz desligada.
+        if ligada {
+            self.luz_abrir_periodo(plant_id).await?;
+        } else {
+            self.luz_fechar_periodo(plant_id).await?;
+        }
+
+        // Atualiza também a leitura mais recente para manter consistência no histórico
+        let plant_id_str = plant_id.to_string();
+        let valor: i64   = if ligada { 1 } else { 0 };
+        sqlx::query!(
+            r#"UPDATE sensor_readings SET luz_ligada = ?
+               WHERE id = (SELECT id FROM sensor_readings WHERE plant_id = ? ORDER BY read_at DESC LIMIT 1)"#,
+            valor, plant_id_str
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ── Status de umidade por planta ──────────────────────────────────────────
+
+    /// Retorna a umidade atual da planta.
+    /// Se não existir registro ainda, retorna None.
+    pub async fn get_umidade_status(&self, plant_id: Uuid) -> anyhow::Result<Option<f64>> {
+        let plant_id_str = plant_id.to_string();
+        let row = sqlx::query!(
+            r#"SELECT umidade FROM plant_umidade_status WHERE plant_id = ?"#,
+            plant_id_str
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.umidade))
+    }
+
+    /// Grava a umidade atual de uma planta. Faz UPSERT.
+    pub async fn set_umidade_status(&self, plant_id: Uuid, umidade: f64) -> anyhow::Result<()> {
+        let plant_id_str = plant_id.to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            INSERT INTO plant_umidade_status (plant_id, umidade, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(plant_id) DO UPDATE SET umidade = excluded.umidade, updated_at = excluded.updated_at
+            "#,
+            plant_id_str, umidade, now
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Inicializa a umidade de uma planta com o meio do range (humidity_min + humidity_max) / 2,
+    /// apenas se ainda não existir registro. Chamado quando a horta é conectada.
+    pub async fn init_umidade_status(&self, plant_id: Uuid, humidity_min: f64, humidity_max: f64) -> anyhow::Result<()> {
+        let plant_id_str = plant_id.to_string();
+        let now = Utc::now().to_rfc3339();
+        let umidade_inicial = (humidity_min + humidity_max) / 2.0;
+        sqlx::query!(
+            r#"
+            INSERT INTO plant_umidade_status (plant_id, umidade, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(plant_id) DO NOTHING
+            "#,
+            plant_id_str, umidade_inicial, now
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ── Cooldown de luz por horta ──────────────────────────────────────────────
+
+    /// Retorna o timestamp Unix do último comando de luz enviado para esta horta.
+    pub async fn get_luz_cooldown(&self, horta_id: Uuid) -> anyhow::Result<Option<i64>> {
+        let horta_id_str = horta_id.to_string();
+        let row = sqlx::query!(
+            r#"SELECT ultimo_comando_at FROM luz_cooldown WHERE horta_id = ?"#,
+            horta_id_str
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.ultimo_comando_at))
+    }
+
+    /// Grava (ou atualiza) o timestamp do último comando de luz desta horta.
+    pub async fn set_luz_cooldown(&self, horta_id: Uuid) -> anyhow::Result<()> {
+        let horta_id_str = horta_id.to_string();
+        let now_ts = Utc::now().timestamp();
+        sqlx::query!(
+            r#"
+            INSERT INTO luz_cooldown (horta_id, ultimo_comando_at)
+            VALUES (?, ?)
+            ON CONFLICT(horta_id) DO UPDATE SET ultimo_comando_at = excluded.ultimo_comando_at
+            "#,
+            horta_id_str, now_ts
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_plant(
+        &self,
+        id: Uuid,
+        name: &str,
+        description: Option<&str>,
+        humidity_min: f64,
+        humidity_max: f64,
+        luz_horas_dia: f64,
+    ) -> anyhow::Result<Plant> {
+        let id_str = id.to_string();
+        let row = sqlx::query!(
+            r#"
+            UPDATE plants
+            SET name = ?, description = ?, humidity_min = ?, humidity_max = ?, luz_horas_dia = ?
+            WHERE id = ?
+            RETURNING
+                id            as "id!",
+                name          as "name!",
+                description,
+                humidity_min,
+                humidity_max,
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
+            "#,
+            name, description, humidity_min, humidity_max, luz_horas_dia, id_str
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(Plant {
+            id: parse_uuid(&row.id)?,
+            name: row.name,
+            description: row.description,
+            humidity_min: row.humidity_min,
+            humidity_max: row.humidity_max,
+            luz_horas_dia: row.luz_horas_dia,
+            created_by: parse_uuid(&row.created_by)?,
+            created_at: parse_dt(&row.created_at)?,
+        })
+    }
+
 }

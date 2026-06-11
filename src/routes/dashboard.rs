@@ -11,12 +11,16 @@ use crate::models::{IrrigationLog, Plant, SensorReading};
 
 #[derive(Serialize)]
 pub struct DashboardResponse {
-    pub plant:          Plant,
-    pub latest_reading: Option<SensorReading>,
-    pub recent_logs:    Vec<IrrigationLog>,
-    pub status:         PlantStatus,
-    pub health_pct:     u8,
-    pub fetched_at:     DateTime<Utc>,
+    pub plant:               Plant,
+    pub latest_reading:      Option<SensorReading>,
+    pub recent_logs:         Vec<IrrigationLog>,
+    pub status:              PlantStatus,
+    pub health_pct:          u8,
+    pub luz_total_hoje_seg:  i64,
+    /// Status autoritativo de luz da planta — vem de plant_luz_status,
+    /// não de sensor_readings, então é correto por planta individual.
+    pub luz_ligada:          bool,
+    pub fetched_at:          DateTime<Utc>,
 }
 
 #[derive(Serialize)]

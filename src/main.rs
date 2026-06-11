@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 
 use axum::{
     Router,
-    http::{HeaderValue, Method},
+    http::Method,
 };
 use dotenvy::dotenv;
 use tower_http::{
@@ -24,10 +24,8 @@ use crate::{db::Database, routes::build_router, serial::SerialDaemon, state::App
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Carrega .env (DATABASE_URL, JWT_SECRET, SERIAL_PORT, etc.)
     dotenv().ok();
 
-    // Inicializa logs com RUST_LOG (ex.: "mini_horta=debug,tower_http=info")
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -36,37 +34,67 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Conecta ao banco e executa migrations automaticamente
     let database = Database::connect().await?;
     info!("Banco de dados conectado e migrations aplicadas");
 
-    // Estado compartilhado entre handlers (DB pool + config JWT)
-    let state = AppState::new(database);
+    // ── Criação do Canal Serial ────────────────────────────────────────────────
+    let (serial_tx, serial_rx) = tokio::sync::mpsc::channel(32);
+    let state = AppState::new(database, serial_tx);
 
-    // Inicia daemon de leitura serial em background (Arduino)
+    // ── Daemon serial (Arduino) ────────────────────────────────────────────────
     let serial_state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = SerialDaemon::run(serial_state).await {
+        // Agora o Daemon recebe o canal de escuta (serial_rx)
+        if let Err(e) = SerialDaemon::run(serial_state, serial_rx).await {
             tracing::error!("Daemon serial encerrou com erro: {e}");
         }
     });
 
-    // Configura CORS (ajuste as origens em produção)
+    // ── Task de reset de luz à meia-noite ──────────────────────────────────────
+    let reset_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            let agora = chrono::Utc::now();
+
+            let proxima_meia_noite = (agora + chrono::Duration::days(1))
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+
+            let espera = (proxima_meia_noite - agora)
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(60));
+
+            tracing::info!(
+                "Reset de luz agendado para {} (em {:.0} min)",
+                proxima_meia_noite,
+                espera.as_secs_f64() / 60.0
+            );
+
+            tokio::time::sleep(espera).await;
+
+            if let Err(e) = reset_state.db().luz_fechar_todos_periodos().await {
+                tracing::error!("Erro no reset de luz à meia-noite: {e}");
+            } else {
+                tracing::info!("Reset de luz à meia-noite concluído");
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
+
+    // ── CORS ───────────────────────────────────────────────────────────────────
     let cors = CorsLayer::new()
-        .allow_origin(
-            std::env::var("FRONTEND_URL")
-                .unwrap_or_else(|_| "http://localhost:5173".to_string())
-                .parse::<HeaderValue>()?,
-        )
+        .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers(Any);
 
-    // Monta o router completo
+    // ── Router ─────────────────────────────────────────────────────────────────
     let app: Router = build_router(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
-    // Bind e serve
     let addr: SocketAddr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
         .parse()?;

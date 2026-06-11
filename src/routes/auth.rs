@@ -9,14 +9,10 @@ use crate::{
 };
 
 /// POST /auth/register
-/// Cria um novo usuário (role padrão = User).
-/// Apenas admins deveriam chamar com role=admin — valide no front ou adicione
-/// o extrator AdminUser se quiser restringir no servidor.
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<CreateUserRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Validação básica de email
     if req.email.is_empty() || !req.email.contains('@') {
         return Err(AppError::BadRequest("E-mail inválido".to_string()));
     }
@@ -35,9 +31,6 @@ pub async fn register(
         .db()
         .create_user(&req.email, &password_hash, &role)
         .await
-        // FIX: db() agora retorna anyhow::Result, não sqlx::Result.
-        // Inspecionamos a mensagem para detectar UNIQUE antes de converter
-        // para AppError::Internal (que aceita anyhow::Error via #[from]).
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
                 AppError::BadRequest("E-mail já cadastrado".to_string())
@@ -54,7 +47,6 @@ pub async fn register(
 }
 
 /// POST /auth/login
-/// Autentica e retorna um JWT.
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
@@ -63,7 +55,6 @@ pub async fn login(
         .db()
         .find_user_by_email(&req.email)
         .await
-        // FIX: mesma razão — converte anyhow::Error → AppError::Internal
         .map_err(AppError::Internal)?
         .ok_or_else(|| AppError::Unauthorized("Credenciais inválidas".to_string()))?;
 

@@ -7,16 +7,20 @@ use uuid::Uuid;
 use crate::{
     auth::{AdminUser, AuthUser},
     errors::{AppError, AppResult},
-    models::{CreatePlantRequest, Plant},
+    models::{CreatePlantRequest, UpdatePlantRequest, Plant},
     state::AppState,
 };
 
-/// GET /plants — lista todas as plantas (qualquer usuário autenticado)
+/// GET /plants — admin vê todas; usuário comum vê públicas + suas próprias
 pub async fn list(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
 ) -> AppResult<Json<Vec<Plant>>> {
-    let plants = state.db().list_plants().await?;
+    let plants = if user.0.role == crate::models::UserRole::Admin {
+        state.db().list_all_plants().await?
+    } else {
+        state.db().list_plants(user.0.sub).await?
+    };
     Ok(Json(plants))
 }
 
@@ -55,6 +59,10 @@ pub async fn create(
         return Err(AppError::BadRequest("Umidade deve estar entre 0 e 100".to_string()));
     }
 
+    if req.luz_horas_dia <= 0.0 || req.luz_horas_dia > 24.0 {
+        return Err(AppError::BadRequest("Horas de luz deve estar entre 0 e 24".to_string()));
+    }
+
     let plant = state
         .db()
         .create_plant(
@@ -62,8 +70,46 @@ pub async fn create(
             req.description.as_deref(),
             req.humidity_min,
             req.humidity_max,
+            req.luz_horas_dia,
             admin.0.sub,
+            true,
         )
+        .await?;
+
+    Ok(Json(plant))
+}
+
+/// PUT /plants/:id — somente admin pode editar plantas existentes
+pub async fn update(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdatePlantRequest>,
+) -> AppResult<Json<Plant>> {
+    if req.name.is_empty() {
+        return Err(AppError::BadRequest("Nome da planta é obrigatório".to_string()));
+    }
+    if req.humidity_min >= req.humidity_max {
+        return Err(AppError::BadRequest(
+            "humidity_min deve ser menor que humidity_max".to_string(),
+        ));
+    }
+    if !(0.0..=100.0).contains(&req.humidity_min)
+        || !(0.0..=100.0).contains(&req.humidity_max)
+    {
+        return Err(AppError::BadRequest("Umidade deve estar entre 0 e 100".to_string()));
+    }
+
+    state.db().get_plant(id).await?
+        .ok_or_else(|| AppError::NotFound(format!("Planta {id} não encontrada")))?;
+
+    if req.luz_horas_dia <= 0.0 || req.luz_horas_dia > 24.0 {
+        return Err(AppError::BadRequest("Horas de luz deve estar entre 0 e 24".to_string()));
+    }
+
+    let plant = state
+        .db()
+        .update_plant(id, &req.name, req.description.as_deref(), req.humidity_min, req.humidity_max, req.luz_horas_dia)
         .await?;
 
     Ok(Json(plant))

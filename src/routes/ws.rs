@@ -27,7 +27,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         ticker.tick().await;
 
         // Busca todas as plantas e a última leitura de cada uma
-        let plants = match state.db().list_plants().await {
+        let plants = match state.db().list_all_plants().await {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!("WS: erro ao listar plantas: {e}");
@@ -43,6 +43,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     "plant_name": plant.name,
                     "humidity": reading.humidity,
                     "light_lux": reading.light_lux,
+                    "luz_ligada": reading.luz_ligada,
                     "read_at": reading.read_at,
                 }));
             }

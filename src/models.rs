@@ -15,7 +15,6 @@ pub enum UserRole {
 
 impl FromStr for UserRole {
     type Err = anyhow::Error;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "admin" => Ok(Self::Admin),
@@ -66,6 +65,7 @@ pub struct Plant {
     pub description: Option<String>,
     pub humidity_min: f64,
     pub humidity_max: f64,
+    pub luz_horas_dia: f64,
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
 }
@@ -76,7 +76,21 @@ pub struct CreatePlantRequest {
     pub description: Option<String>,
     pub humidity_min: f64,
     pub humidity_max: f64,
+    #[serde(default = "default_luz_horas")]
+    pub luz_horas_dia: f64,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePlantRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub humidity_min: f64,
+    pub humidity_max: f64,
+    #[serde(default = "default_luz_horas")]
+    pub luz_horas_dia: f64,
+}
+
+fn default_luz_horas() -> f64 { 12.0 }
 
 // ── Leitura de sensor ──────────────────────────────────────────────────────────
 
@@ -85,17 +99,24 @@ pub struct SensorReading {
     pub id: Uuid,
     pub plant_id: Uuid,
     pub humidity: f64,
+    /// Segundos totais de luz acumulados no dia
     pub light_lux: f64,
+    /// 1 = luz ligada, 0 = luz desligada
+    pub luz_ligada: i64,
     pub read_at: DateTime<Utc>,
 }
 
 /// Formato JSON enviado pelo Arduino via serial:
-/// {"plant_name":"Manjericao","humidity":42.5,"light_lux":0.0}
+/// {"plant_name":"Manjericao","humidity":42.5,"light_lux":3600.0,"luz_ligada":1}
 #[derive(Debug, Deserialize)]
 pub struct ArduinoPayload {
     pub plant_name: String,
     pub humidity: f64,
+    /// Segundos de luz acumulados hoje
     pub light_lux: f64,
+    /// 1 = ligada, 0 = desligada
+    #[serde(default)]
+    pub luz_ligada: i64,
 }
 
 impl ArduinoPayload {
@@ -107,7 +128,7 @@ impl ArduinoPayload {
             return Err(format!("Umidade fora de faixa: {}", self.humidity));
         }
         if self.light_lux < 0.0 {
-            return Err(format!("Lux inválido: {}", self.light_lux));
+            return Err(format!("Segundos de luz inválido: {}", self.light_lux));
         }
         Ok(())
     }
@@ -125,7 +146,6 @@ pub enum IrrigationTrigger {
 
 impl FromStr for IrrigationTrigger {
     type Err = anyhow::Error;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "auto"   => Ok(Self::Auto),
@@ -142,6 +162,8 @@ pub struct IrrigationLog {
     pub triggered_by: IrrigationTrigger,
     pub duration_sec: i32,
     pub started_at: DateTime<Utc>,
+    /// E-mail de quem disparou. None para irrigações automáticas.
+    pub triggered_by_email: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,7 +183,6 @@ pub struct Horta {
     pub created_at: DateTime<Utc>,
 }
 
-/// Resposta da API para operações de horta
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HortaResponse {
     pub id: Uuid,

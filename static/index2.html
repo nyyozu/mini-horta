@@ -1244,14 +1244,27 @@ function renderPlantDropdown(plants) {
 }
 
 async function loadPlantOptions() {
-  _plantOptions = [
-    {value:'Manjericao', label:'Manjericão'},
-    {value:'Salsinha',   label:'Salsinha'},
-    {value:'Hortela',    label:'Hortelã'},
-    {value:'Alecrim',    label:'Alecrim'},
-  ];
+  // Carrega plantas do backend se o token existir, senão usa lista fixa
+  if (!state.token) {
+    _plantOptions = [
+      {value:'Manjericao', label:'Manjericão'},
+      {value:'Salsinha',   label:'Salsinha'},
+      {value:'Hortela',    label:'Hortelã'},
+      {value:'Alecrim',    label:'Alecrim'},
+    ];
+  } else {
+    try {
+      const plants = await apiFetch('/plants');
+      _plantOptions = plants.map(p => ({ value: p.name, label: p.name }));
+    } catch {
+      _plantOptions = [{value:'Manjericao', label:'Manjericão'}];
+    }
+  }
   renderPlantDropdown(_plantOptions);
-  selectPlantOption(_plantOptions[0].value, _plantOptions[0].label);
+  // Inicializa com a primeira opção
+  if (_plantOptions.length > 0) {
+    selectPlantOption(_plantOptions[0].value, _plantOptions[0].label);
+  }
 }
 
 // Fecha dropdown ao clicar fora
