@@ -1,0 +1,13 @@
+# Banco de dados
+*.db
+*.db-shm
+*.db-wal
+
+# Ambiente
+.env
+
+# Build Rust
+/target
+
+# Cache sqlx
+.sqlx
