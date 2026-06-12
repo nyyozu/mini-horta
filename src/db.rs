@@ -1,4 +1,6 @@
 use chrono::Utc;
+use rand::Rng;
+use rand::distributions::Alphanumeric;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use uuid::Uuid;
 
@@ -90,7 +92,9 @@ impl Database {
 
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        Ok(Self { pool })
+        let db = Self { pool };
+        db.seed_system_catalog().await?;
+        Ok(db)
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -227,9 +231,13 @@ impl Database {
                 created_by    as "created_by!",
                 created_at    as "created_at!"
             FROM plants
-            WHERE publica = 1 OR created_by = ?
+            WHERE created_by = ?
+               OR (publica = 1 AND LOWER(name) NOT IN (
+                     SELECT LOWER(name) FROM plants WHERE publica = 0 AND created_by = ?
+                   ))
             ORDER BY created_at DESC
             "#,
+            user_id_str,
             user_id_str
         )
         .fetch_all(&self.pool)
@@ -318,6 +326,138 @@ impl Database {
             })
         })
         .transpose()
+    }
+
+    /// Busca uma planta pertencente a um usuário específico, por nome
+    /// (case-insensitive). Usado para garantir unicidade por usuário
+    /// antes de criar uma nova planta privada.
+    pub async fn find_plant_by_owner_and_name(
+        &self,
+        owner_id: Uuid,
+        name: &str,
+    ) -> anyhow::Result<Option<Plant>> {
+        let owner_s = owner_id.to_string();
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                id          as "id!",
+                name        as "name!",
+                description,
+                humidity_min,
+                humidity_max,
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
+            FROM plants WHERE created_by = ? AND LOWER(name) = LOWER(?)
+            "#,
+            owner_s, name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| {
+            Ok(Plant {
+                id: parse_uuid(&r.id)?,
+                name: r.name,
+                description: r.description,
+                humidity_min: r.humidity_min,
+                humidity_max: r.humidity_max,
+                luz_horas_dia: r.luz_horas_dia,
+                created_by: parse_uuid(&r.created_by)?,
+                created_at: parse_dt(&r.created_at)?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Lista plantas visíveis para o usuário, respeitando role:
+    /// - Admin vê todas as plantas de todos os usuários.
+    /// - Usuário comum vê apenas plantas públicas (sistema/admin) + as suas próprias.
+    pub async fn list_plants_for_user(
+        &self,
+        user_id: Uuid,
+        role: &UserRole,
+    ) -> anyhow::Result<Vec<Plant>> {
+        match role {
+            UserRole::Admin => self.list_all_plants().await,
+            UserRole::User => self.list_plants(user_id).await,
+        }
+    }
+
+    /// Garante a existência do usuário sistema (UUID aleatório + senha
+    /// aleatória, identificado pela flag is_system) e do catálogo público
+    /// de plantas (Manjericão, Salsinha, Hortelã, Alecrim), com UUIDs
+    /// aleatórios. Idempotente — roda no boot, não recria nada se já existir.
+    pub async fn seed_system_catalog(&self) -> anyhow::Result<()> {
+        // 1. Usuário sistema
+        let system_id: Uuid = match sqlx::query!(
+            r#"SELECT id as "id!" FROM users WHERE is_system = 1 LIMIT 1"#
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        {
+            Some(row) => parse_uuid(&row.id)?,
+            None => {
+                let id = Uuid::new_v4();
+                let id_str = id.to_string();
+
+                let random_password: String = rand::thread_rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(40)
+                    .map(char::from)
+                    .collect();
+                let hash = bcrypt::hash(&random_password, bcrypt::DEFAULT_COST)?;
+                let now = Utc::now().to_rfc3339();
+
+                sqlx::query!(
+                    r#"
+                    INSERT INTO users (id, email, password_hash, role, created_at, is_system)
+                    VALUES (?, 'sistema@horta.local', ?, 'admin', ?, 1)
+                    "#,
+                    id_str, hash, now
+                )
+                .execute(&self.pool)
+                .await?;
+
+                tracing::info!(user_id = %id, "Usuário sistema criado");
+                id
+            }
+        };
+
+        // 2. Catálogo público
+        let catalogo: [(&str, &str, f64, f64, f64); 4] = [
+            (
+                "Manjericao",
+                "Antibacteriano, repelente natural de insetos, auxilia na digestão e é usado em chás calmantes.",
+                60.0, 80.0, 12.0,
+            ),
+            (
+                "Salsinha",
+                "Rica em vitamina C e K, diurética, antioxidante e amplamente usada como tempero culinário.",
+                65.0, 80.0, 12.0,
+            ),
+            (
+                "Hortela",
+                "Alivia náuseas e problemas digestivos, descongestionante natural, refrescante em chás e sucos.",
+                70.0, 85.0, 8.0,
+            ),
+            (
+                "Alecrim",
+                "Estimula memória e concentração, anti-inflamatório, melhora a circulação e é usado em temperos e óleos essenciais.",
+                40.0, 60.0, 12.0,
+            ),
+        ];
+
+        for (name, desc, hmin, hmax, luz) in catalogo {
+            let exists = self.find_plant_by_owner_and_name(system_id, name).await?;
+            if exists.is_none() {
+                self.create_plant(name, Some(desc), hmin, hmax, luz, system_id, true)
+                    .await?;
+                tracing::info!(plant = name, "Planta de catálogo semeada");
+            }
+        }
+
+        Ok(())
     }
 
     // ── Leituras de sensor ─────────────────────────────────────────────────────
@@ -628,6 +768,36 @@ impl Database {
             .collect()
     }
 
+    /// Lista todas as hortas de todos os usuários, com nome da planta e
+    /// e-mail do proprietário. Uso exclusivo do admin.
+    pub async fn list_all_hortas_with_owner(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                h.code     as "code!",
+                p.name     as "plant_name!",
+                u.email    as "owner_email!"
+            FROM hortas h
+            JOIN plants p ON p.id = h.plant_id
+            JOIN users u  ON u.id = h.owner_id
+            ORDER BY u.email, h.code
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "code": r.code,
+                    "plant_name": r.plant_name,
+                    "owner_email": r.owner_email,
+                })
+            })
+            .collect())
+    }
+
     // ── Histórico de luz por planta ────────────────────────────────────────────
 
     /// Abre um novo período de luz para a planta (luz ligou).
@@ -811,7 +981,46 @@ impl Database {
     }
 
     /// Lista todas as plantas sem filtro — uso interno (WS, serial, buscas por nome).
-    pub async fn list_all_plants(&self) -> anyhow::Result<Vec<Plant>> {
+    /// Retorna todas as plantas com metadados extras para o painel admin:
+    /// - `publica`: true = catálogo do sistema, false = criada por usuário
+    /// - `owner_email`: e-mail de quem criou
+    pub async fn list_all_plants_with_meta(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                p.id            as "id!",
+                p.name          as "name!",
+                p.description,
+                p.humidity_min,
+                p.humidity_max,
+                p.luz_horas_dia as "luz_horas_dia!",
+                p.created_by    as "created_by!",
+                p.created_at    as "created_at!",
+                p.publica       as "publica!",
+                u.email         as "owner_email!"
+            FROM plants p
+            JOIN users u ON u.id = p.created_by
+            ORDER BY p.publica DESC, p.created_at ASC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| serde_json::json!({
+            "id":           r.id,
+            "name":         r.name,
+            "description":  r.description,
+            "humidity_min": r.humidity_min,
+            "humidity_max": r.humidity_max,
+            "luz_horas_dia": r.luz_horas_dia,
+            "created_by":   r.created_by,
+            "created_at":   r.created_at,
+            "publica":      r.publica == 1,
+            "owner_email":  r.owner_email,
+        })).collect())
+    }
+
+        pub async fn list_all_plants(&self) -> anyhow::Result<Vec<Plant>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -853,6 +1062,50 @@ impl Database {
             normalize_plant_name(&p.name) == normalized
         });
         Ok(found)
+    }
+
+    /// Busca uma planta privada (publica = 0) pertencente ao owner_id, pelo nome normalizado.
+    /// Usado para reutilizar a instância já existente do usuário sem criar duplicata.
+    pub async fn find_owned_plant_by_normalized_name(
+        &self,
+        normalized: &str,
+        owner_id: Uuid,
+    ) -> anyhow::Result<Option<Plant>> {
+        let owner_str = owner_id.to_string();
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                id            as "id!",
+                name          as "name!",
+                description,
+                humidity_min,
+                humidity_max,
+                luz_horas_dia as "luz_horas_dia!",
+                created_by    as "created_by!",
+                created_at    as "created_at!"
+            FROM plants
+            WHERE publica = 0 AND created_by = ?
+            "#,
+            owner_str
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .find(|r| normalize_plant_name(&r.name) == normalized)
+            .map(|r| {
+                Ok(Plant {
+                    id: parse_uuid(&r.id)?,
+                    name: r.name,
+                    description: r.description,
+                    humidity_min: r.humidity_min,
+                    humidity_max: r.humidity_max,
+                    luz_horas_dia: r.luz_horas_dia,
+                    created_by: parse_uuid(&r.created_by)?,
+                    created_at: parse_dt(&r.created_at)?,
+                })
+            })
+            .transpose()
     }
 
     /// Inicializa o histórico de luz com um período já fechado e duração aleatória,

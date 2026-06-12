@@ -53,9 +53,12 @@ fn irrigation_routes() -> Router<AppState> {
 
 fn admin_routes() -> Router<AppState> {
     Router::new()
-        .route("/luz/:code/ligar",    post(admin::luz_ligar))
-        .route("/luz/:code/desligar", post(admin::luz_desligar))
-        .route("/luz/:plant_id/logs", get(admin::luz_logs))
+        .route("/hortas",              get(admin::listar_hortas_cadastradas))
+        .route("/plants",              get(admin::listar_plantas_admin))
+        .route("/luz/:code/ligar",     post(admin::luz_ligar))
+        .route("/luz/:code/desligar",  post(admin::luz_desligar))
+        .route("/luz/:code/historico", get(admin::luz_historico))
+        .route("/luz/:plant_id/logs",  get(admin::luz_logs))
 }
 
 fn hortas_routes() -> Router<AppState> {

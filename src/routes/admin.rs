@@ -14,12 +14,33 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::{
-    auth::AuthUser,
+    auth::{AdminUser, AuthUser},
     errors::{AppError, AppResult},
     models::{LuzLog, UserRole},
     serial::SerialCommand,
     state::AppState,
 };
+
+/// GET /admin/hortas
+/// Lista todas as hortas cadastradas, com planta e e-mail do proprietário.
+/// Exclusivo para admins.
+pub async fn listar_hortas_cadastradas(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> AppResult<Json<Vec<Value>>> {
+    let hortas = state.db().list_all_hortas_with_owner().await?;
+    Ok(Json(hortas))
+}
+
+/// GET /admin/plants
+/// Lista todas as plantas com metadados (publica, owner_email) para o painel admin.
+pub async fn listar_plantas_admin(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> AppResult<Json<Vec<Value>>> {
+    let plantas = state.db().list_all_plants_with_meta().await?;
+    Ok(Json(plantas))
+}
 
 /// POST /admin/luz/:code/ligar
 pub async fn luz_ligar(

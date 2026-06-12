@@ -47,6 +47,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # FIX: `typed-header` habilita TypedHeader e axum_extra::headers
 axum-extra = { version = "0.9", features = ["typed-header"] }
+rand = "0.8"
 
 [dev-dependencies]
 axum-test = "14"
+

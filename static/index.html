@@ -440,6 +440,7 @@ input{font-family:'Nunito',sans-serif}
 }
 .add-circle span{font-size:28px;color:var(--green-dark);line-height:1;margin-top:-2px}
 .add-lbl{font-size:12px;color:var(--green-dark);text-align:center;font-weight:700;opacity:.7;line-height:1.4}
+.rec-owner-badge{width:100%;font-size:10px;color:var(--green-muted);font-weight:500;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ===== MODAL DE PLANTA ===== */
 .modal-overlay{
@@ -724,13 +725,7 @@ input{font-family:'Nunito',sans-serif}
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-/* cada camada empilhada abaixo do topo */
-.log-stack-wrap .log-stack-ghost {
-  position: absolute;
-  left: 0; right: 0;
-  border-radius: 14px;
-  pointer-events: none;
-}
+
 /* card principal (topo) */
 .log-cascade-item {
   position: relative;
@@ -840,15 +835,21 @@ input{font-family:'Nunito',sans-serif}
 .log-cascade-list .log-cascade-item {
   position: static;
 }
-/* Fade progressivo nos mais antigos da lista expandida */
-.log-cascade-list .log-cascade-item:nth-child(n+6) {
-  opacity: .55;
-  transform: scale(.985);
+
+
+/* ── Duas pilhas de log lado a lado ── */
+.log-stacks-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.log-cascade-list .log-cascade-item:nth-child(n+9) {
-  opacity: .3;
-  transform: scale(.975);
+/* card do topo: totalmente opaco, destaque visual */
+.log-stacks-row .log-stack-wrap > .log-cascade-item {
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(0,0,0,.10);
 }
+
+
 
 /* ===== ANIMATIONS ===== */
 
@@ -1081,9 +1082,17 @@ input{font-family:'Nunito',sans-serif}
         <div class="cur-card" id="current-plant-card"></div>
         <div class="sec-hdr" style="margin-top:16px">
           <div class="sec-title">Recomendações</div>
-          <div class="sec-sub">Tempo de monitoração fixa para todas as plantas</div>
+          <div class="sec-sub">Catálogo do sistema</div>
         </div>
         <div class="recs-grid" id="recs-carousel"></div>
+        <!-- Seção exclusiva para admin: plantas criadas por usuários -->
+        <div id="user-plants-section" style="display:none">
+          <div class="sec-hdr" style="margin-top:20px">
+            <div class="sec-title">Criadas por usuários</div>
+            <div class="sec-sub">Plantas adicionadas por usuários da plataforma</div>
+          </div>
+          <div class="recs-grid" id="user-plants-grid"></div>
+        </div>
         <div style="height:12px"></div>
       </div>
       <nav class="bottom-nav">
@@ -1128,7 +1137,7 @@ input{font-family:'Nunito',sans-serif}
         <div class="set-sec">
           <div class="set-lbl">Horta</div>
           <div class="set-item"><span class="h-ind"></span><span>Hortas conectadas</span></div>
-          <div class="set-item admin-only" style="display:none"><span class="set-icon">🌿</span><span>Editar plantas</span></div>
+          <div class="set-item admin-only" style="display:none;cursor:pointer" onclick="go('plants')"><span class="set-icon">🌿</span><span>Editar plantas</span></div>
         </div>
         <div class="set-sec">
           <div class="set-lbl">App</div>
@@ -1290,7 +1299,7 @@ function go(screenId) {
   if (screenId === 'main')       loadDashboard();
   if (screenId === 'plants')     loadPlants();
   if (screenId === 'controle')   loadControle();
-  if (screenId === 'horta-list') renderHortaList();
+  if (screenId === 'horta-list') renderHortaList(); // async — não bloqueia navegação
 }
 
 setTimeout(() => go('welcome'), 1500);
@@ -1354,6 +1363,26 @@ async function doSignUp() {
 async function afterLogin() {
   updateSettingsUI();
   state.hortas = await apiFetch('/hortas/mine').catch(() => []);
+
+  if (state.role === 'admin') {
+    // Se admin não tem horta, cria uma com Manjericão automaticamente para testes de hardware
+    if (state.hortas.length === 0) {
+      try {
+        const novaHorta = await apiFetch('/hortas/connect', {
+          method: 'POST',
+          body: JSON.stringify({ code: 'admin-hw', plant_name: 'Manjericao' }),
+        });
+        state.hortas = [novaHorta];
+      } catch(e) {
+        // Horta já existe — busca novamente
+        state.hortas = await apiFetch('/hortas/mine').catch(() => []);
+      }
+    }
+    if (state.hortas.length > 0) state.currentHorta = state.hortas[0];
+    go('main');
+    return;
+  }
+
   if (state.hortas.length > 0) {
     state.currentHorta = state.hortas[0];
     go('horta-list');
@@ -1405,14 +1434,19 @@ function renderPlantDropdown(plants) {
 }
 
 async function loadPlantOptions() {
-  _plantOptions = [
-    {value:'Manjericao', label:'Manjericão'},
-    {value:'Salsinha',   label:'Salsinha'},
-    {value:'Hortela',    label:'Hortelã'},
-    {value:'Alecrim',    label:'Alecrim'},
-  ];
+  try {
+    const plants = await apiFetch('/plants');
+    _plantOptions = plants.map(p => ({ value: p.name, label: p.name }));
+  } catch(e) {
+    _plantOptions = [
+      {value:'Manjericao', label:'Manjericão'},
+      {value:'Salsinha',   label:'Salsinha'},
+      {value:'Hortela',    label:'Hortelã'},
+      {value:'Alecrim',    label:'Alecrim'},
+    ];
+  }
   renderPlantDropdown(_plantOptions);
-  selectPlantOption(_plantOptions[0].value, _plantOptions[0].label);
+  if (_plantOptions.length > 0) selectPlantOption(_plantOptions[0].value, _plantOptions[0].label);
 }
 
 // Fecha dropdown ao clicar fora
@@ -1457,9 +1491,34 @@ async function goToMain() {
 }
 
 // ── Lista de hortas ───────────────────────────────────────────
-function renderHortaList() {
+async function renderHortaList() {
   const el = document.getElementById('horta-list-items');
   if (!el) return;
+
+  if (state.role === 'admin') {
+    el.innerHTML = '<div class="horta-item"><span class="h-label" style="opacity:.6">Carregando...</span></div>';
+    try {
+      const todas = await apiFetch('/admin/hortas');
+      if (!todas || todas.length === 0) {
+        el.innerHTML = '<div class="horta-item"><span class="h-label" style="opacity:.6">Nenhuma horta cadastrada.</span></div>';
+        return;
+      }
+      el.innerHTML = todas.map(h => `
+        <div class="horta-item">
+          <span class="h-dot on"></span>
+          <div style="flex:1;min-width:0">
+            <span class="h-label">Horta ${h.code} — ${h.plant_name || '—'}</span>
+            <span style="display:block;font-size:11px;color:var(--green-muted);margin-top:2px">${h.owner_email || ''}</span>
+          </div>
+          <span class="h-time">ativa</span>
+        </div>
+      `).join('');
+    } catch(e) {
+      el.innerHTML = `<div class="horta-item"><span class="h-label" style="opacity:.6;color:#c0392b">Erro: ${e.message}</span></div>`;
+    }
+    return;
+  }
+
   if (state.hortas.length === 0) {
     el.innerHTML = '<div class="horta-item"><span class="h-label" style="opacity:.6">Nenhuma horta cadastrada</span></div>';
     return;
@@ -1610,8 +1669,8 @@ function makeLogStack(stackId, items, emptyHtml) {
       </div>
     </div>`;
 
-  // Ghosts (sombras atrás): até 2 camadas
-  const ghostCount = Math.min(total - 1, 2);
+  // Sem ghosts — cada item é um card independente
+  const ghostCount = 0;
   const ghosts = Array.from({length: ghostCount}, (_, gi) => {
     const offset = (gi + 1) * 7;   // px que cada camada recua
     const scale  = 1 - (gi + 1) * 0.03;
@@ -1641,10 +1700,8 @@ function makeLogStack(stackId, items, emptyHtml) {
   }).join('');
 
   // Wrapper: collapsed mostra pilha, expanded mostra lista com header+fechar
-  const bottomPad = ghostCount * 7; // espaço para os ghosts aparecerem abaixo
   return `
     <div class="log-stack-wrap" id="${stackId}"
-         style="padding-bottom:${bottomPad}px"
          onclick="toggleLogStack('${stackId}')">
       ${ghosts}
       ${topHtml}
@@ -1674,14 +1731,28 @@ function toggleLogStack(stackId) {
   if (!wrap || !expanded) return;
   const isOpen = wrap.classList.toggle('open');
   wrap.style.paddingBottom = isOpen ? '0' : '';
-  // remove ghosts visualmente ao abrir
+
+  // ghosts somem ao abrir
   wrap.querySelectorAll('.log-stack-ghost').forEach(g => {
     g.style.opacity = isOpen ? '0' : '';
   });
+
   expanded.style.display = isOpen ? 'block' : 'none';
-  // esconde a pilha (topo) quando expandido, mostra a lista
-  const topCard = wrap.querySelector('.log-cascade-item');
-  if (topCard) topCard.style.display = isOpen ? 'none' : '';
+
+  // quando expandido dentro do grid de 2 colunas, expande para coluna dupla
+  const row = wrap.closest('.log-stacks-row');
+  if (row) {
+    // esconde o card do topo e estica a lista para 2 colunas
+    wrap.style.display          = isOpen ? 'none' : '';
+    expanded.style.gridColumn   = isOpen ? 'span 2' : '';
+    // move expanded para dentro do row se ainda não estiver
+    if (isOpen && !row.contains(expanded)) {
+      row.appendChild(expanded);
+    }
+  } else {
+    const topCard = wrap.querySelector('.log-cascade-item');
+    if (topCard) topCard.style.display = isOpen ? 'none' : '';
+  }
 }
 
 function renderManutCards(data) {
@@ -1725,31 +1796,35 @@ function renderManutCards(data) {
       ? d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})
       : d.toLocaleDateString('pt-BR');
     const dataFull = `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
-    const inc  = log.token != null ? ` +${log.token.toFixed(1)}` : '';
     const quem = log.triggered_by_email || 'Sistema';
     return {
       _ts:     d.getTime(),
       tipo:    ligou ? 'log-warn' : 'log-ok',
       icone:   ligou ? '💡' : '🌑',
-      sumario: `${ligou ? 'Ligou a luz' : 'Desligou a luz'}${inc}`,
+      sumario: ligou ? 'Ligou a luz' : 'Desligou a luz',
       dataStr: dataShort,
       detalhes: [dataFull, `👤 ${quem}`],
     };
   });
 
-  // ── Pilha única (mais recente primeiro) ─────────────────────────
-  const allItems = [...regaItems, ...luzItems].sort((a, b) => b._ts - a._ts);
-
-  el.innerHTML = makeLogStack(
-    'stack-manut',
-    allItems,
-    `<div class="log-cascade-item log-ok">
-      <div class="log-cascade-header">
-        <span class="m-icon">✅</span>
-        <span class="log-summary">Sem atividades recentes</span>
-        <span class="log-time-short">Tudo ok</span>
-      </div></div>`
-  );
+  // ── Duas pilhas separadas: 💧 rega  e  💡 luz ─────────────────
+  el.innerHTML =
+    `<div class="log-stacks-row">` +
+    makeLogStack(
+      'stack-rega',
+      regaItems,
+      `<div class="log-cascade-item log-ok"><div class="log-cascade-header">` +
+      `<span class="m-icon">💧</span><span class="log-summary">Sem regas ainda</span>` +
+      `</div></div>`
+    ) +
+    makeLogStack(
+      'stack-luz',
+      luzItems,
+      `<div class="log-cascade-item log-ok"><div class="log-cascade-header">` +
+      `<span class="m-icon">💡</span><span class="log-summary">Sem ações de luz</span>` +
+      `</div></div>`
+    ) +
+    `</div>`;
 
   // Card de luz diária
   const card   = document.getElementById('luz-diaria-card');
@@ -1829,13 +1904,45 @@ async function loadPlants() {
   let plants = [];
   try { plants = await apiFetch('/plants'); } catch(e) {}
 
-  // Guarda plantas em variável global para acesso pelo índice nos botões de edição
-  window._allPlants = plants;
+  // Para admin, busca metadados extras (publica, owner_email) via endpoint dedicado
+  let plantsMeta = [];
   const isAdmin = state.role === 'admin';
+  if (isAdmin) {
+    try { plantsMeta = await apiFetch('/admin/plants'); } catch(e) {}
+  }
 
-  // Normaliza nome para comparação (ignora acentos e maiúsculas)
+  // Mapa id → meta para lookup rápido
+  const metaById = {};
+  plantsMeta.forEach(m => { metaById[m.id] = m; });
+
+  window._allPlants = plants;
+
   function normName(s) {
     return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  }
+
+  function editBtnHtml(p, size = 14) {
+    if (!isAdmin) return '';
+    return `<button class="cur-edit-btn" style="width:${size}px;height:${size}px" onclick="event.stopPropagation();openEditPlantById('${p.id}')" title="Editar">
+      <svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none">
+        <path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="#848C45" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    </button>`;
+  }
+
+  function recCardHtml(p, extra = '') {
+    const luz = p.luz_horas_dia ?? getLuz(p);
+    return `<div class="rec-card">
+      <div class="rec-card-img-placeholder">${plantEmoji(p.name)}</div>
+      <div class="rec-name">${p.name}${editBtnHtml(p, 13)}</div>
+      ${extra ? `<div class="rec-owner-badge">${extra}</div>` : ''}
+      <div class="rec-info">
+        ${p.description ? `<p>✅ ${p.description}</p>` : ''}
+        <p>☀️ Luz: ${luz}h por dia</p>
+        <p>🌱 Solo: ${p.humidity_min}–${p.humidity_max}% de umidade</p>
+      </div>
+      <button class="btn-trocar" onclick="trocarPlanta('${p.name}')">Trocar para essa</button>
+    </div>`;
   }
 
   // ── Planta atual ──────────────────────────────────────────
@@ -1847,18 +1954,11 @@ async function loadPlants() {
       : plants[0];
 
     if (cur) {
-      const editBtn = isAdmin
-        ? `<button class="cur-edit-btn" onclick="openEditPlantById('${cur.id}')" title="Editar">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="#848C45" stroke-width="1.5" stroke-linejoin="round"/>
-            </svg>
-          </button>`
-        : '';
-      const luz = getLuz(cur);
+      const luz = cur.luz_horas_dia ?? getLuz(cur);
       curEl.innerHTML = `
         <div class="plant-tag" style="justify-content:space-between;width:100%;border-radius:14px;padding:6px 14px;">
           <span>Horta ${state.currentHorta?.code || '—'} · ${cur.name}</span>
-          ${editBtn}
+          ${editBtnHtml(cur, 14)}
         </div>
         <div class="cur-body">
           <div class="cur-info">
@@ -1873,43 +1973,43 @@ async function loadPlants() {
     }
   }
 
-  // ── Recomendações ────────────────────────────────────────
+  // ── Recomendações (catálogo do sistema) ───────────────────
   const recsEl = document.getElementById('recs-carousel');
   if (!recsEl) return;
 
   const currentNormRec = normName(state.currentHorta?.plant_name);
-  const recs = plants.filter(p => normName(p.name) !== currentNormRec);
 
-  let html = recs.map(p => {
-    const luz = getLuz(p);
-    const editBtn = isAdmin
-      ? `<button class="rec-edit-btn" onclick="event.stopPropagation();openEditPlantById('${p.id}')" title="Editar">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="#848C45" stroke-width="1.5" stroke-linejoin="round"/>
-          </svg>
-        </button>`
-      : '';
-    return `<div class="rec-card">
-      <div class="rec-card-img-placeholder">${plantEmoji(p.name)}</div>
-      <div class="rec-name">${p.name}${editBtn}</div>
-      <div class="rec-info">
-        ${p.description ? `<p>✅ ${p.description}</p>` : ''}
-        <p>☀️ Luz: ${luz}h por dia</p>
-        <p>🌱 Solo: ${p.humidity_min}–${p.humidity_max}% de umidade</p>
-      </div>
-      <button class="btn-trocar" onclick="trocarPlanta('${p.name}')">Trocar para essa</button>
-    </div>`;
-  }).join('');
+  if (isAdmin && plantsMeta.length > 0) {
+    // Admin: separar catálogo (publica=true) de plantas de usuários (publica=false)
+    const catalogo  = plantsMeta.filter(m => m.publica  && normName(m.name) !== currentNormRec);
+    const deUsuario = plantsMeta.filter(m => !m.publica && normName(m.name) !== currentNormRec);
 
-  // Card "Adicionar planta" — só admin
-  if (isAdmin) {
-    html += `<div class="add-card" onclick="openAddPlant()">
+    // Catálogo do sistema
+    let htmlCat = catalogo.map(m => recCardHtml(m)).join('');
+    htmlCat += `<div class="add-card" onclick="openAddPlant()">
       <div class="add-circle"><span>+</span></div>
-      <div class="add-lbl">Adicionar uma planta</div>
+      <div class="add-lbl">Adicionar ao catálogo</div>
     </div>`;
-  }
+    recsEl.innerHTML = htmlCat || `<p style="font-size:13px;color:var(--green-muted);padding:12px 0">Catálogo vazio.</p>`;
 
-  recsEl.innerHTML = html || `<p style="font-size:13px;color:var(--green-muted);padding:12px 0">Nenhuma recomendação disponível.</p>`;
+    // Plantas de usuários
+    const secEl  = document.getElementById('user-plants-section');
+    const gridEl = document.getElementById('user-plants-grid');
+    if (secEl && gridEl) {
+      secEl.style.display = deUsuario.length > 0 ? 'block' : 'none';
+      gridEl.innerHTML = deUsuario.map(m => {
+        const badge = m.owner_email;
+        return recCardHtml(m, badge);
+      }).join('');
+    }
+  } else {
+    // Usuário comum: só mostra plantas visíveis sem separação
+    const recs = plants.filter(p => normName(p.name) !== currentNormRec);
+    let html = recs.map(p => recCardHtml(p)).join('');
+    recsEl.innerHTML = html || `<p style="font-size:13px;color:var(--green-muted);padding:12px 0">Nenhuma recomendação disponível.</p>`;
+    const secEl = document.getElementById('user-plants-section');
+    if (secEl) secEl.style.display = 'none';
+  }
 }
 
 // ── Trocar planta ────────────────────────────────────────────
@@ -2401,9 +2501,9 @@ async function toggleRega() {
   const txt  = document.getElementById('rega-status-txt');
   const umEl = document.getElementById('rega-umidade');
 
-  // Bloqueia se umidade > 85%
+  // Bloqueia se umidade > 85% (admins podem regar independentemente)
   const umidadeAtual = state.dashboard?.latest_reading?.humidity ?? 0;
-  if (umidadeAtual > 85) {
+  if (umidadeAtual > 85 && state.role !== 'admin') {
     dot.classList.remove('on');
     dot.classList.add('alerta');
     txt.textContent = 'Cuidado! umidade alta';
@@ -2424,22 +2524,30 @@ async function toggleRega() {
   try {
     const res = await apiFetch(`/hortas/${state.currentHorta.code}/regar`, { method: 'POST' });
 
-    // Atualiza umidade localmente com o valor que o servidor calculou
-    if (state.dashboard?.latest_reading) {
-      state.dashboard.latest_reading.humidity = res.umidade_nova;
+    // Manjericão é planta física — umidade vem do sensor real, não somamos localmente
+    const plantNorm = (state.currentHorta?.plant_name || '')
+      .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const isManjericao = plantNorm === 'manjericao';
+
+    // Aguarda o Arduino processar (Manjericão tem delay maior de hardware real)
+    await new Promise(resolve => setTimeout(resolve, isManjericao ? 15000 : 10000));
+
+    if (!isManjericao) {
+      // Plantas virtuais: atualiza umidade localmente com o valor calculado
+      if (state.dashboard?.latest_reading) {
+        state.dashboard.latest_reading.humidity = res.umidade_nova;
+      }
+      if (umEl) umEl.textContent = `${res.umidade_nova.toFixed(1)}%`;
     }
 
-    if (umEl) umEl.textContent = `${res.umidade_nova.toFixed(1)}%`;
-
-    if (res.umidade_nova > 85) {
-      // Ficou úmido demais após a rega: bolinha vermelha + aviso
+    if (!isManjericao && res.umidade_nova > 85) {
       dot.classList.remove('on');
       dot.classList.add('alerta');
       txt.textContent = 'Cuidado! umidade alta';
       btn.disabled = false;
     } else {
       dot.classList.remove('on');
-      txt.textContent = `Regado! +${res.incremento.toFixed(1)}% de umidade`;
+      txt.textContent = isManjericao ? 'Regado!' : `Regado! +${res.incremento.toFixed(1)}% de umidade`;
       setTimeout(() => {
         txt.textContent = 'Pronta para regar';
         btn.disabled = false;
@@ -2459,17 +2567,35 @@ async function toggleRega() {
   }
 }
 
-function renderRegaUmidade() {
+async function renderRegaUmidade() {
   const umEl = document.getElementById('rega-umidade');
   const dot  = document.getElementById('rega-dot');
   const txt  = document.getElementById('rega-status-txt');
   if (!umEl) return;
 
-  const umAtual = state.dashboard?.latest_reading?.humidity;
-  umEl.textContent = umAtual != null ? `${umAtual.toFixed(1)}%` : '—';
-
-  // Não sobrescreve durante uma rega em andamento ("Regando...")
+  // Não sobrescreve durante uma rega em andamento
   if (txt && txt.textContent === 'Regando...') return;
+
+  let umAtual = state.dashboard?.latest_reading?.humidity;
+
+  // Para o Manjericão (hardware real), busca a leitura mais recente do servidor
+  // para garantir que o valor reflete o sensor Arduino, não um valor simulado.
+  const isManjericao = state.currentHorta &&
+    (state.dashboard?.plant?.name || '').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'') === 'manjericao';
+
+  if (isManjericao && state.currentHorta) {
+    try {
+      const fresh = await apiFetch(`/hortas/${state.currentHorta.code}/dashboard`);
+      if (fresh?.latest_reading?.humidity != null) {
+        umAtual = fresh.latest_reading.humidity;
+        // Sincroniza o dashboard local também
+        if (state.dashboard) state.dashboard.latest_reading = fresh.latest_reading;
+      }
+    } catch(e) { /* usa o valor local se a requisição falhar */ }
+  }
+
+  umEl.textContent = umAtual != null ? `${umAtual.toFixed(1)}%` : '—';
 
   if (umAtual != null && umAtual > 85) {
     dot?.classList.remove('on');
