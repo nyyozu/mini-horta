@@ -38,10 +38,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         let mut readings = Vec::new();
         for plant in &plants {
             if let Ok(Some(reading)) = state.db().latest_reading(plant.id).await {
+                // Arredonda para 1 casa decimal — evita piscar no front quando
+                // o f64 bruto (ex: 99.74999...) difere do valor que o HTTP
+                // retorna após o mesmo arredondamento no toFixed(1) do JS.
+                let humidity_arredondado = (reading.humidity * 10.0).round() / 10.0;
+
                 readings.push(json!({
                     "plant_id": plant.id,
                     "plant_name": plant.name,
-                    "humidity": reading.humidity,
+                    "humidity": humidity_arredondado,
                     "light_lux": reading.light_lux,
                     "luz_ligada": reading.luz_ligada,
                     "read_at": reading.read_at,

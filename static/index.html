@@ -92,6 +92,7 @@ html,body{height:100%;width:100%;overflow:hidden}body{
   justify-content:center;
   align-items:center;
   min-height:100vh;
+  min-height:100dvh;
 }
 button{font-family:'Nunito',sans-serif;cursor:pointer}
 input{font-family:'Nunito',sans-serif}
@@ -284,9 +285,8 @@ input{font-family:'Nunito',sans-serif}
 }
 .horta-name{
   font-family:var(--serif);
-  font-size:22px;font-weight:400;
+  font-size:22px;font-weight:700;
   color:var(--green-dark);
-  text-decoration:underline;text-underline-offset:3px;
 }
 .chevron{font-size:15px;color:var(--green-dark);margin-top:3px}
 .horta-dropdown{
@@ -488,6 +488,13 @@ input{font-family:'Nunito',sans-serif}
   font-family:'Nunito',sans-serif;cursor:pointer;
 }
 .modal-btn-save:active{transform:scale(.97)}
+.modal-btn-delete{
+  width:100%;padding:13px;border-radius:50px;border:1.5px solid #c0392b;
+  background:transparent;font-size:14px;font-weight:700;color:#c0392b;
+  font-family:'Nunito',sans-serif;cursor:pointer;margin-top:6px;
+  display:none;
+}
+.modal-btn-delete:active{transform:scale(.97)}
 /* Current plant card edit button */
 .cur-edit-btn{
   background:none;border:none;padding:2px 4px;cursor:pointer;margin-left:4px;
@@ -585,6 +592,21 @@ input{font-family:'Nunito',sans-serif}
   text-transform: uppercase;
   color: #9FA668;
 }
+.controle-erro {
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  color: var(--green-dark);
+  background: rgba(44,89,22,.06);
+  border: 1px solid rgba(44,89,22,.12);
+}
+.dark .controle-erro {
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+}
 .luz-status-row {
   display: flex;
   align-items: center;
@@ -659,10 +681,11 @@ input{font-family:'Nunito',sans-serif}
 .rega-dot {
   width: 12px; height: 12px;
   border-radius: 50%;
-  background: #ccc;
+  background: #4CAF50;
   transition: background .3s;
 }
 .rega-dot.on { background: #2087EF; box-shadow: 0 0 8px #2087ef88; }
+.rega-dot.alerta { background: #E53935; box-shadow: 0 0 8px #e5393588; }
 .dark .btn-rega { background: #1a6fd4; }
 
 
@@ -690,6 +713,141 @@ input{font-family:'Nunito',sans-serif}
   background: #9FA668;
   border-radius: 2px;
   transition: width .4s ease;
+}
+
+/* ===== LOGS EM CASCATA ===== */
+/* ── Pilha de notificações estilo iOS ── */
+.log-stack-wrap {
+  position: relative;
+  /* altura = card do topo + peekagem das camadas abaixo */
+  margin-bottom: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* cada camada empilhada abaixo do topo */
+.log-stack-wrap .log-stack-ghost {
+  position: absolute;
+  left: 0; right: 0;
+  border-radius: 14px;
+  pointer-events: none;
+}
+/* card principal (topo) */
+.log-cascade-item {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(76,175,80,.12);
+  transition: transform .22s ease, box-shadow .15s;
+  z-index: 10;
+}
+.log-stack-wrap:active .log-cascade-item { opacity: .88; }
+
+/* Header sempre visível */
+.log-cascade-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  user-select: none;
+}
+.log-cascade-header .m-icon { font-size: 17px; flex-shrink: 0; }
+.log-cascade-header .log-summary {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--green-dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.log-cascade-header .log-time-short {
+  font-size: 11px;
+  color: var(--green-muted);
+  flex-shrink: 0;
+}
+.log-cascade-chevron {
+  font-size: 11px;
+  color: var(--green-muted);
+  transition: transform .22s;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.log-stack-wrap.open .log-cascade-chevron { transform: rotate(180deg); }
+
+/* Header da lista expandida (com botão fechar) */
+.log-stack-expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 8px;
+}
+.log-stack-expanded-header .log-stack-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--green-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.log-stack-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 99px;
+  background: rgba(76,175,80,.16);
+  color: var(--green-dark);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  border: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dark .log-stack-close { background: rgba(76,175,80,.22); }
+
+/* Detalhe expandido dentro do card topo */
+.log-cascade-detail {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .22s ease, padding .22s ease;
+  padding: 0 13px;
+}
+.log-cascade-item.open .log-cascade-detail {
+  max-height: 80px;
+  padding: 0 13px 11px;
+}
+.log-cascade-detail .m-desc {
+  font-size: 12px;
+  color: var(--green-muted);
+  line-height: 1.5;
+}
+
+/* Cores por tipo — topo */
+.log-cascade-item.log-ok   { background: rgba(76,175,80,.14); }
+.log-cascade-item.log-warn { background: rgba(255,193,7,.14); }
+.log-cascade-item.log-err  { background: rgba(229,57,53,.12); }
+.dark .log-cascade-item.log-ok   { background: rgba(76,175,80,.18); }
+.dark .log-cascade-item.log-warn { background: rgba(255,193,7,.15); }
+.dark .log-cascade-item.log-err  { background: rgba(229,57,53,.15); }
+
+/* Lista expandida (todos os cards visíveis) */
+.log-cascade-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Dentro da lista expandida cada item não precisa ser relativo */
+.log-cascade-list .log-cascade-item {
+  position: static;
+}
+/* Fade progressivo nos mais antigos da lista expandida */
+.log-cascade-list .log-cascade-item:nth-child(n+6) {
+  opacity: .55;
+  transform: scale(.985);
+}
+.log-cascade-list .log-cascade-item:nth-child(n+9) {
+  opacity: .3;
+  transform: scale(.975);
 }
 
 /* ===== ANIMATIONS ===== */
@@ -862,9 +1020,10 @@ input{font-family:'Nunito',sans-serif}
           </div>
         </div>
         <div class="card">
-          <div class="card-title">Manutenção</div>
-          <div id="manut-list" style="max-height:192px;overflow-y:auto;scrollbar-width:none"></div>
-          <div id="luz-diaria-card" style="margin-top:10px;display:none">
+          <div class="card-title">📋 Histórico</div>
+          <div id="manut-list"></div>
+
+          <div id="luz-diaria-card" style="margin-top:8px;display:none">
             <div class="manut-item" id="luz-diaria-item">
               <span class="m-icon">☀️</span>
               <div>
@@ -1031,7 +1190,7 @@ input{font-family:'Nunito',sans-serif}
             </div>
           </div>
           <button class="btn-luz ligar" id="btn-luz" onclick="toggleLuz()">Ligar luz</button>
-          <div id="luz-erro" style="display:none;font-size:12px;color:#b35c00;background:#fff8e1;border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.5;"></div>
+          <div id="luz-erro" class="controle-erro" style="display:none;"></div>
           <div class="controle-timer">Luz acumulada hoje: <span id="luz-acumulada">—</span></div>
         </div>
 
@@ -1043,7 +1202,7 @@ input{font-family:'Nunito',sans-serif}
             <span id="rega-status-txt">Pronta para regar</span>
           </div>
           <button class="btn-rega" id="btn-rega" onclick="toggleRega()">Regar agora</button>
-          <div id="rega-erro" style="display:none;font-size:12px;color:#b35c00;background:#fff8e1;border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.5;"></div>
+          <div id="rega-erro" class="controle-erro" style="display:none;"></div>
           <div class="controle-timer">Umidade atual: <span id="rega-umidade">—</span></div>
         </div>
       </div>
@@ -1056,10 +1215,7 @@ input{font-family:'Nunito',sans-serif}
           <i class="ti ti-plant-2" aria-hidden="true"></i>
         </button>
         <button class="nav-btn nav-active" onclick="go('controle')" aria-label="Controle">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="9" stroke="#2C5916" stroke-width="1.8"/>
-            <path d="M12 7v5l3 3" stroke="#2C5916" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
+          <i class="ti ti-adjustments-horizontal" aria-hidden="true"></i>
         </button>
         <button class="nav-btn" onclick="go('settings')" aria-label="Configurações">
           <i class="ti ti-settings" aria-hidden="true"></i>
@@ -1100,6 +1256,7 @@ input{font-family:'Nunito',sans-serif}
         <button class="modal-btn-cancel" onclick="closePlantModal()">Cancelar</button>
         <button class="modal-btn-save" onclick="savePlantModal()">Salvar</button>
       </div>
+      <button class="modal-btn-delete" id="modal-btn-delete" onclick="deletePlantModal()">🗑️ Excluir planta</button>
     </div>
   </div>
 
@@ -1147,6 +1304,7 @@ async function apiFetch(path, opts = {}) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error || res.statusText);
   }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return null;
   return res.json();
 }
 
@@ -1161,9 +1319,11 @@ async function doLogin() {
       method: 'POST',
       body: JSON.stringify({ email, password: pass }),
     });
-    state.token  = data.token;
-    state.userId = data.user_id;
-    state.role   = data.role;
+    state.token     = data.token;
+    state.userId    = data.user_id;
+    state.role      = data.role;
+    // Pega o e-mail do campo de input (já foi digitado pelo usuário)
+    state.userEmail = document.getElementById('login-email')?.value?.trim() || '';
     await afterLogin();
   } catch (e) {
     err.textContent = e.message;
@@ -1181,6 +1341,7 @@ async function doSignUp() {
   if (pass !== confirm) { err.textContent = 'As senhas não coincidem.'; err.style.display = 'block'; return; }
   try {
     await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify({ email, password: pass }) });
+    state.userEmail = email; // guarda antes do login limpar os inputs
     document.getElementById('login-email').value = email;
     document.getElementById('login-pass').value  = pass;
     await doLogin();
@@ -1316,8 +1477,11 @@ function renderHortaList() {
 async function loadDashboard() {
   if (!state.currentHorta) return;
   try {
-    // Busca pelo código da horta, não pelo plant_id
     const data = await apiFetch(`/hortas/${state.currentHorta.code}/dashboard`);
+    // Busca logs de luz junto antes de renderizar
+    if (data.plant?.id) {
+      data.luz_logs = await apiFetch(`/admin/luz/${data.plant.id}/logs?limit=10`).catch(() => []);
+    }
     state.dashboard = data;
     renderMain(data);
   } catch (e) { console.warn('Erro dashboard:', e.message); }
@@ -1366,47 +1530,226 @@ function renderStatusCards(data) {
   const r = data.latest_reading;
   const humEl = document.getElementById('status-humidity');
   const luxEl = document.getElementById('status-lux');
+
   if (humEl) {
     if (r) {
       const ok = r.humidity >= data.plant.humidity_min && r.humidity <= data.plant.humidity_max;
-      humEl.innerHTML = `<span class="s-icon">💧</span><span class="s-name">Umidade</span>
-        <span class="s-ok" style="color:${ok?'#4CAF50':'#e74c3c'}">${r.humidity.toFixed(1)}%</span>
-        <span class="s-det">Ideal: ${data.plant.humidity_min}–${data.plant.humidity_max}%</span>`;
+      const novoValor = r.humidity.toFixed(1) + '%';
+      const novaCor   = ok ? '#4CAF50' : '#e74c3c';
+      const novaDet   = `Ideal: ${data.plant.humidity_min}–${data.plant.humidity_max}%`;
+
+      // Monta o card só na primeira vez — depois só atualiza os valores
+      let okSpan  = humEl.querySelector('.s-ok');
+      let detSpan = humEl.querySelector('.s-det');
+      if (!okSpan || humEl.querySelector('.s-det')?.textContent === 'Sem dados') {
+        humEl.innerHTML = `<span class="s-icon">💧</span><span class="s-name">Umidade</span>
+          <span class="s-ok"></span><span class="s-det"></span>`;
+        okSpan  = humEl.querySelector('.s-ok');
+        detSpan = humEl.querySelector('.s-det');
+      }
+      if (okSpan.textContent  !== novoValor) { okSpan.textContent  = novoValor; }
+      if (okSpan.style.color  !== novaCor)   { okSpan.style.color  = novaCor;   }
+      if (detSpan.textContent !== novaDet)   { detSpan.textContent = novaDet;   }
     } else {
       humEl.innerHTML = `<span class="s-icon">💧</span><span class="s-name">Umidade</span><span class="s-det">Sem dados</span>`;
     }
   }
+
   if (luxEl) {
     if (r) {
-      const ligada = data.luz_ligada === true;
-      luxEl.innerHTML = `<span class="s-icon">☀️</span><span class="s-name">Luz</span>
-        <span class="s-ok" style="color:${ligada ? '#4CAF50' : '#9FA668'}">${ligada ? 'Ligada' : 'Desligada'}</span>`;
+      const ligada   = data.luz_ligada === true;
+      const novoTxt  = ligada ? 'Ligada' : 'Desligada';
+      const novaCor  = ligada ? '#4CAF50' : '#9FA668';
+
+      let okSpan = luxEl.querySelector('.s-ok');
+      if (!okSpan) {
+        luxEl.innerHTML = `<span class="s-icon">☀️</span><span class="s-name">Luz</span><span class="s-ok"></span>`;
+        okSpan = luxEl.querySelector('.s-ok');
+      }
+      if (okSpan.textContent !== novoTxt) { okSpan.textContent = novoTxt; }
+      if (okSpan.style.color !== novaCor) { okSpan.style.color = novaCor; }
     } else {
       luxEl.innerHTML = `<span class="s-icon">☀️</span><span class="s-name">Luz</span><span class="s-det">Sem dados</span>`;
     }
   }
 }
 
+// ── Helper: cria a pilha única de logs (rega + luz) estilo iOS ───────────────
+// collapsed → mostra só o card do topo + 2 "sombras" atrás (profundidade visual)
+// expanded  → mostra a lista completa em coluna, com cabeçalho e botão fechar
+//
+// stackId  : id único do wrapper  (ex: 'stack-manut')
+// items    : array de { tipo, icone, sumario, dataStr, detalhes[] }, já ordenado
+// emptyHtml: html a mostrar quando não há itens
+function makeLogStack(stackId, items, emptyHtml) {
+  if (!items.length) return emptyHtml;
+
+  const total = items.length;
+  const countBadge = total > 1
+    ? `<span style="
+        display:inline-flex;align-items:center;justify-content:center;
+        background:var(--green-mid);color:#fff;
+        font-size:10px;font-weight:800;
+        border-radius:99px;padding:1px 7px;margin-left:6px;
+        vertical-align:middle;">${total}</span>`
+    : '';
+
+  // Card topo (item[0])
+  const top = items[0];
+  const topId = `logitem-top-${stackId}`;
+  const topHtml = `
+    <div class="log-cascade-item ${top.tipo}" id="${topId}">
+      <div class="log-cascade-header">
+        <span class="m-icon">${top.icone}</span>
+        <span class="log-summary">${top.sumario}${countBadge}</span>
+        <span class="log-time-short">${top.dataStr}</span>
+        <span class="log-cascade-chevron">▾</span>
+      </div>
+      <div class="log-cascade-detail">
+        ${top.detalhes.filter(Boolean).map(d=>`<div class="m-desc">${d}</div>`).join('')}
+      </div>
+    </div>`;
+
+  // Ghosts (sombras atrás): até 2 camadas
+  const ghostCount = Math.min(total - 1, 2);
+  const ghosts = Array.from({length: ghostCount}, (_, gi) => {
+    const offset = (gi + 1) * 7;   // px que cada camada recua
+    const scale  = 1 - (gi + 1) * 0.03;
+    const op     = 0.55 - gi * 0.18;
+    const bgItem = items[gi + 1];
+    return `<div class="log-stack-ghost" style="
+      bottom:-${offset}px;
+      transform:scale(${scale});
+      transform-origin:center top;
+      opacity:${op};
+      height:44px;
+      background:${colorForTipo(bgItem?.tipo || top.tipo)};
+    "></div>`;
+  }).join('');
+
+  // Lista expandida (todos os itens, sem cascata interna — detalhes sempre visíveis)
+  const listHtml = items.map(item => {
+    const detalheHtml = item.detalhes.filter(Boolean).map(d=>`<div class="m-desc">${d}</div>`).join('');
+    return `<div class="log-cascade-item open ${item.tipo}">
+      <div class="log-cascade-header" style="cursor:default">
+        <span class="m-icon">${item.icone}</span>
+        <span class="log-summary">${item.sumario}</span>
+        <span class="log-time-short">${item.dataStr}</span>
+      </div>
+      <div class="log-cascade-detail">${detalheHtml}</div>
+    </div>`;
+  }).join('');
+
+  // Wrapper: collapsed mostra pilha, expanded mostra lista com header+fechar
+  const bottomPad = ghostCount * 7; // espaço para os ghosts aparecerem abaixo
+  return `
+    <div class="log-stack-wrap" id="${stackId}"
+         style="padding-bottom:${bottomPad}px"
+         onclick="toggleLogStack('${stackId}')">
+      ${ghosts}
+      ${topHtml}
+    </div>
+    <div id="stack-expanded-${stackId}" style="display:none;margin-top:4px">
+      <div class="log-stack-expanded-header">
+        <span class="log-stack-title">Histórico (${total})</span>
+        <button type="button" class="log-stack-close"
+                onclick="event.stopPropagation();toggleLogStack('${stackId}')">✕</button>
+      </div>
+      <div class="log-cascade-list" id="stack-list-${stackId}">
+        ${listHtml}
+      </div>
+    </div>`;
+}
+
+function colorForTipo(tipo) {
+  if (tipo === 'log-ok')   return 'rgba(76,175,80,.14)';
+  if (tipo === 'log-warn') return 'rgba(255,193,7,.14)';
+  if (tipo === 'log-err')  return 'rgba(229,57,53,.12)';
+  return 'rgba(76,175,80,.14)';
+}
+
+function toggleLogStack(stackId) {
+  const wrap     = document.getElementById(stackId);
+  const expanded = document.getElementById(`stack-expanded-${stackId}`);
+  if (!wrap || !expanded) return;
+  const isOpen = wrap.classList.toggle('open');
+  wrap.style.paddingBottom = isOpen ? '0' : '';
+  // remove ghosts visualmente ao abrir
+  wrap.querySelectorAll('.log-stack-ghost').forEach(g => {
+    g.style.opacity = isOpen ? '0' : '';
+  });
+  expanded.style.display = isOpen ? 'block' : 'none';
+  // esconde a pilha (topo) quando expandido, mostra a lista
+  const topCard = wrap.querySelector('.log-cascade-item');
+  if (topCard) topCard.style.display = isOpen ? 'none' : '';
+}
+
 function renderManutCards(data) {
   const el = document.getElementById('manut-list');
   if (!el) return;
-  if (!data.recent_logs?.length) {
-    el.innerHTML = `<div class="manut-item manut-ok"><span class="m-icon">✅</span>
-      <div><div class="m-title">Sem irrigações recentes</div><div class="m-desc">Solo na faixa ideal.</div></div></div>`;
-  } else {
-    el.innerHTML = data.recent_logs.map(log => {
-      const d = new Date(log.started_at);
-      const auto = log.triggered_by === 'auto';
-      const quem = !auto && log.triggered_by_email
-        ? `<div class="m-desc m-email">👤 ${log.triggered_by_email}</div>`
-        : '';
-      return `<div class="manut-item ${auto?'manut-ok':'manut-warn'}">
-        <span class="m-icon">${auto?'💧':'🖐️'}</span>
-        <div><div class="m-title">Irrigação ${auto?'automática':'manual'} — ${log.duration_sec}s</div>
-        <div class="m-desc">${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
-        ${quem}</div></div>`;
-    }).join('');
-  }
+
+  // ── Logs de rega ─────────────────────────────────────────────
+  const LIMIT_REGA = 10;
+  const logs = (data.recent_logs || []).slice(0, LIMIT_REGA);
+
+  const regaItems = logs.map(log => {
+    const d    = new Date(log.started_at);
+    const auto = log.triggered_by === 'auto';
+    const hoje = new Date().toLocaleDateString('pt-BR');
+    const dataShort = d.toLocaleDateString('pt-BR') === hoje
+      ? d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})
+      : d.toLocaleDateString('pt-BR');
+    const dataFull = `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
+    return {
+      _ts:     d.getTime(),
+      tipo:    auto ? 'log-ok' : 'log-warn',
+      icone:   auto ? '💧' : '🖐️',
+      sumario: `Irrigação ${auto?'automática':'manual'} — ${log.duration_sec}s`,
+      dataStr: dataShort,
+      detalhes: [
+        dataFull,
+        !auto && log.triggered_by_email ? `👤 ${log.triggered_by_email}` : (auto ? '🤖 Automática' : null),
+      ],
+    };
+  });
+
+  // ── Logs de luz ───────────────────────────────────────────────
+  const LIMIT_LUZ = 10;
+  const luzLogs = (data.luz_logs || []).slice(0, LIMIT_LUZ);
+
+  const luzItems = luzLogs.map(log => {
+    const d = new Date(log.created_at);
+    const ligou = log.acao === 'ligar';
+    const hoje  = new Date().toLocaleDateString('pt-BR');
+    const dataShort = d.toLocaleDateString('pt-BR') === hoje
+      ? d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})
+      : d.toLocaleDateString('pt-BR');
+    const dataFull = `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
+    const inc  = log.token != null ? ` +${log.token.toFixed(1)}` : '';
+    const quem = log.triggered_by_email || 'Sistema';
+    return {
+      _ts:     d.getTime(),
+      tipo:    ligou ? 'log-warn' : 'log-ok',
+      icone:   ligou ? '💡' : '🌑',
+      sumario: `${ligou ? 'Ligou a luz' : 'Desligou a luz'}${inc}`,
+      dataStr: dataShort,
+      detalhes: [dataFull, `👤 ${quem}`],
+    };
+  });
+
+  // ── Pilha única (mais recente primeiro) ─────────────────────────
+  const allItems = [...regaItems, ...luzItems].sort((a, b) => b._ts - a._ts);
+
+  el.innerHTML = makeLogStack(
+    'stack-manut',
+    allItems,
+    `<div class="log-cascade-item log-ok">
+      <div class="log-cascade-header">
+        <span class="m-icon">✅</span>
+        <span class="log-summary">Sem atividades recentes</span>
+        <span class="log-time-short">Tudo ok</span>
+      </div></div>`
+  );
 
   // Card de luz diária
   const card   = document.getElementById('luz-diaria-card');
@@ -1417,7 +1760,6 @@ function renderManutCards(data) {
   if (!card) return;
 
   const totalSeg  = data.luz_total_hoje_seg || 0;
-  // Meta de luz por planta (em horas) — varia por tipo
   const metaHoras = plantMetaLuz(data.plant?.name || '');
   const metaSeg   = metaHoras * 3600;
   const pct       = metaSeg > 0 ? Math.min((totalSeg / metaSeg) * 100, 100) : 0;
@@ -1627,6 +1969,7 @@ function openEditPlant(plantJson) {
   document.getElementById('modal-hum-max').value = p.humidity_max ?? '';
   document.getElementById('modal-luz').value = getLuz(p);
   document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('modal-btn-delete').style.display = 'block';
   document.getElementById('plant-modal').classList.add('open');
 }
 
@@ -1640,12 +1983,16 @@ function openAddPlant() {
   document.getElementById('modal-hum-max').value = '';
   document.getElementById('modal-luz').value = '';
   document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('modal-btn-delete').style.display = 'none';
   document.getElementById('plant-modal').classList.add('open');
 }
 
 function closePlantModal(e) {
   if (e && e.target !== document.getElementById('plant-modal')) return;
   document.getElementById('plant-modal').classList.remove('open');
+  // Reseta o botão de excluir para a próxima abertura do modal
+  const delBtn = document.getElementById('modal-btn-delete');
+  if (delBtn) { delBtn.disabled = false; delBtn.textContent = '🗑️ Excluir planta'; }
 }
 
 async function savePlantModal() {
@@ -1683,6 +2030,8 @@ async function savePlantModal() {
     }
 
     document.getElementById('plant-modal').classList.remove('open');
+    const delBtn2 = document.getElementById('modal-btn-delete');
+    if (delBtn2) { delBtn2.disabled = false; delBtn2.textContent = '🗑️ Excluir planta'; }
     await loadPlants();
     // Atualiza dashboard apenas se a planta editada/criada for a planta atual
     if (state.currentHorta?.plant_name === name) {
@@ -1693,6 +2042,34 @@ async function savePlantModal() {
     errEl.style.display = 'block';
   } finally {
     saveBtn.textContent = 'Salvar'; saveBtn.disabled = false;
+  }
+}
+
+async function deletePlantModal() {
+  if (!_modalPlant) return;
+  const nome = _modalPlant.name;
+  if (!confirm(`Tem certeza que deseja excluir "${nome}"? Esta ação não pode ser desfeita.`)) return;
+
+  const delBtn  = document.getElementById('modal-btn-delete');
+  const errEl   = document.getElementById('modal-error');
+  delBtn.disabled = true;
+  delBtn.textContent = 'Excluindo...';
+
+  try {
+    await apiFetch(`/plants/${_modalPlant.id}`, { method: 'DELETE' });
+    delBtn.disabled = false; delBtn.textContent = '🗑️ Excluir planta';
+    document.getElementById('plant-modal').classList.remove('open');
+    // Se a planta excluída era a atual, limpa o estado
+    if (state.currentHorta?.plant_name === nome) {
+      state.currentHorta = null;
+      state.dashboard = null;
+    }
+    await loadPlants();
+  } catch(e) {
+    errEl.textContent = e.message || 'Erro ao excluir.';
+    errEl.style.display = 'block';
+    delBtn.disabled = false;
+    delBtn.textContent = '🗑️ Excluir planta';
   }
 }
 
@@ -1719,6 +2096,7 @@ async function selectHorta(code) {
   await loadDashboard();
 }
 
+
 document.addEventListener('click', e => {
   if (!e.target.closest('.horta-selector')) {
     const dd = document.getElementById('horta-dropdown');
@@ -1741,9 +2119,12 @@ function connectWebSocket() {
         const reading = msg.data.find(r => r.plant_id === plantId);
         if (reading) {
           state.dashboard.latest_reading = reading;
-          renderMain(state.dashboard);
-          // luz_ligada vem de plant_luz_status via dashboard, não do WS
-          // o WS só serve para atualizar umidade/leituras em tempo real
+          // Atualiza só os cards de sensor — não recria logs nem nome
+          // Isso elimina o pisca: só os spans de valor são tocados no DOM
+          renderHealth(state.dashboard);
+          renderStatusCards(state.dashboard);
+          const updEl = document.getElementById("last-upd");
+          if (updEl) updEl.textContent = "Última atualização: " + new Date().toLocaleTimeString("pt-BR");
         }
       }
     } catch {}
@@ -1756,7 +2137,10 @@ function connectWebSocket() {
 function updateSettingsUI() {
   const letterEl = document.getElementById('avatar-letter');
   const nameEl   = document.getElementById('prof-name');
-  if (letterEl) letterEl.textContent = state.role === 'admin' ? 'A' : 'U';
+  if (letterEl) {
+    const email = state.userEmail || '';
+    letterEl.textContent = email ? email[0].toUpperCase() : (state.role === 'admin' ? 'A' : 'U');
+  }
   if (nameEl)   nameEl.textContent   = state.role === 'admin' ? 'Administrador' : 'Usuário';
   document.querySelectorAll('.admin-only').forEach(el => {
     el.style.display = state.role === 'admin' ? 'flex' : 'none';
@@ -1772,7 +2156,10 @@ setInterval(() => {
   const mainActive     = document.getElementById('main')?.classList.contains('active');
   const controleActive = document.getElementById('controle')?.classList.contains('active');
   if (state.currentHorta) {
-    if (mainActive) loadDashboard();
+    // Só faz fetch HTTP se o WebSocket não estiver conectado — evita piscar
+    // quando WS e polling chegam ao mesmo tempo com valores f64 diferentes
+    const wsVivo = state.wsConn && state.wsConn.readyState === WebSocket.OPEN;
+    if (mainActive && !wsVivo) loadDashboard();
     if (controleActive && !luzPendente) loadControle();
   }
 }, 5000);
@@ -2014,7 +2401,23 @@ async function toggleRega() {
   const txt  = document.getElementById('rega-status-txt');
   const umEl = document.getElementById('rega-umidade');
 
+  // Bloqueia se umidade > 85%
+  const umidadeAtual = state.dashboard?.latest_reading?.humidity ?? 0;
+  if (umidadeAtual > 85) {
+    dot.classList.remove('on');
+    dot.classList.add('alerta');
+    txt.textContent = 'Cuidado! umidade alta';
+    const erroEl = document.getElementById('rega-erro');
+    if (erroEl) {
+      erroEl.textContent = `⚠️ Umidade em ${umidadeAtual.toFixed(1)}% — solo úmido demais para regar.`;
+      erroEl.style.display = 'block';
+      setTimeout(() => { erroEl.style.display = 'none'; }, 4000);
+    }
+    return;
+  }
+
   btn.disabled = true;
+  dot.classList.remove('alerta');
   dot.classList.add('on');
   txt.textContent = 'Regando...';
 
@@ -2026,16 +2429,25 @@ async function toggleRega() {
       state.dashboard.latest_reading.humidity = res.umidade_nova;
     }
 
-    dot.classList.remove('on');
-    txt.textContent = `Regado! +${res.incremento.toFixed(1)}% de umidade`;
     if (umEl) umEl.textContent = `${res.umidade_nova.toFixed(1)}%`;
 
-    setTimeout(() => {
-      txt.textContent = 'Pronta para regar';
+    if (res.umidade_nova > 85) {
+      // Ficou úmido demais após a rega: bolinha vermelha + aviso
+      dot.classList.remove('on');
+      dot.classList.add('alerta');
+      txt.textContent = 'Cuidado! umidade alta';
       btn.disabled = false;
-    }, 4000);
+    } else {
+      dot.classList.remove('on');
+      txt.textContent = `Regado! +${res.incremento.toFixed(1)}% de umidade`;
+      setTimeout(() => {
+        txt.textContent = 'Pronta para regar';
+        btn.disabled = false;
+      }, 4000);
+    }
   } catch (e) {
     dot.classList.remove('on');
+    dot.classList.remove('alerta');
     txt.textContent = 'Pronta para regar';
     btn.disabled = false;
     const erroEl = document.getElementById('rega-erro');
@@ -2049,9 +2461,25 @@ async function toggleRega() {
 
 function renderRegaUmidade() {
   const umEl = document.getElementById('rega-umidade');
+  const dot  = document.getElementById('rega-dot');
+  const txt  = document.getElementById('rega-status-txt');
   if (!umEl) return;
+
   const umAtual = state.dashboard?.latest_reading?.humidity;
   umEl.textContent = umAtual != null ? `${umAtual.toFixed(1)}%` : '—';
+
+  // Não sobrescreve durante uma rega em andamento ("Regando...")
+  if (txt && txt.textContent === 'Regando...') return;
+
+  if (umAtual != null && umAtual > 85) {
+    dot?.classList.remove('on');
+    dot?.classList.add('alerta');
+    if (txt) txt.textContent = 'Cuidado! umidade alta';
+  } else {
+    dot?.classList.remove('alerta');
+    dot?.classList.remove('on');
+    if (txt) txt.textContent = 'Pronta para regar';
+  }
 }
 
 // ── Modo escuro ───────────────────────────────────────────────────────────────

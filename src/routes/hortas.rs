@@ -8,6 +8,7 @@ use crate::{
     auth::AuthUser,
     errors::{AppError, AppResult},
     models::{HortaResponse, IrrigationTrigger},
+    routes::util::normalize_plant_name,
     state::AppState,
 };
 
@@ -20,31 +21,6 @@ pub struct ConnectRequest {
 #[derive(Deserialize)]
 pub struct PatchPlantRequest {
     pub plant_name: String,
-}
-
-/// Normaliza o nome da planta para busca: minúsculas, sem acentos.
-/// Isso evita criar duplicatas como "Manjericao" e "Manjericão".
-fn normalize_plant_name(name: &str) -> String {
-    // Substitui os caracteres acentuados mais comuns do português
-    name.chars()
-        .map(|c| match c {
-            'á'|'à'|'â'|'ã'|'ä' => 'a',
-            'é'|'è'|'ê'|'ë'     => 'e',
-            'í'|'ì'|'î'|'ï'     => 'i',
-            'ó'|'ò'|'ô'|'õ'|'ö' => 'o',
-            'ú'|'ù'|'û'|'ü'     => 'u',
-            'ç'                  => 'c',
-            'ñ'                  => 'n',
-            'Á'|'À'|'Â'|'Ã'|'Ä' => 'A',
-            'É'|'È'|'Ê'|'Ë'     => 'E',
-            'Í'|'Ì'|'Î'|'Ï'     => 'I',
-            'Ó'|'Ò'|'Ô'|'Õ'|'Ö' => 'O',
-            'Ú'|'Ù'|'Û'|'Ü'     => 'U',
-            'Ç'                  => 'C',
-            other                => other,
-        })
-        .collect::<String>()
-        .to_lowercase()
 }
 
 /// POST /hortas/connect
@@ -88,6 +64,14 @@ pub async fn connect(
 
     // Inicializa umidade no meio do range da planta (só se ainda não existir)
     state.db().init_umidade_status(plant.id, plant.humidity_min, plant.humidity_max).await?;
+
+    // Para plantas não-Manjericão, inicializa histórico de luz com valor aleatório
+    // para não começar do zero (mesmo comportamento da umidade fictícia)
+    let manjericao = state.db().find_plant_by_normalized_name("manjericao").await?;
+    let is_manjericao = manjericao.as_ref().map(|m| m.id) == Some(plant.id);
+    if !is_manjericao {
+        let _ = state.db().init_luz_historico(plant.id).await;
+    }
 
     Ok(Json(HortaResponse {
         id:         horta.id,
@@ -177,18 +161,17 @@ pub async fn dashboard(
     let latest_reading = if plant.id == target_plant_id {
         sensor_reading
     } else {
-        let umidade_planta = state.db().get_umidade_status(plant.id).await?
-            .unwrap_or_else(|| (plant.humidity_min + plant.humidity_max) / 2.0);
+        let (umidade_planta, ultima_atualizacao) = state.db()
+            .get_umidade_status_com_tempo(plant.id).await?
+            .unwrap_or_else(|| {
+                let mid = (plant.humidity_min + plant.humidity_max) / 2.0;
+                (mid, horta.created_at)
+            });
 
-        // --- CÁLCULO DO DECAIMENTO TEMPORAL ---
         let agora = Utc::now();
-        let ultima_atividade = recent_logs.first()
-            .map(|log| log.started_at)
-            .unwrap_or(horta.created_at); 
+        let minutos_passados = agora.signed_duration_since(ultima_atualizacao).num_minutes() as f64;
+        let taxa_secagem_por_minuto = 0.05;
 
-        let minutos_passados = agora.signed_duration_since(ultima_atividade).num_minutes() as f64;
-        let taxa_secagem_por_minuto = 0.05; 
-        
         let umidade_calculada = (umidade_planta - (minutos_passados * taxa_secagem_por_minuto)).max(0.0);
 
         sensor_reading.map(|mut r| { r.humidity = umidade_calculada; r })
@@ -255,16 +238,15 @@ pub async fn regar(
     let umidade_atual = if is_manjericao {
         ultima_leitura.as_ref().map(|r| r.humidity).unwrap_or((plant.humidity_min + plant.humidity_max) / 2.0)
     } else {
-        let umidade_bd = state.db().get_umidade_status(horta.plant_id).await?
-            .unwrap_or_else(|| (plant.humidity_min + plant.humidity_max) / 2.0);
+        let (umidade_bd, ultima_atualizacao) = state.db()
+            .get_umidade_status_com_tempo(horta.plant_id).await?
+            .unwrap_or_else(|| {
+                let mid = (plant.humidity_min + plant.humidity_max) / 2.0;
+                (mid, horta.created_at)
+            });
 
-        let ultimos_logs = state.db().list_irrigation_logs(horta.plant_id, 1).await?;
         let agora = Utc::now();
-        let ultima_atividade = ultimos_logs.first()
-            .map(|log| log.started_at)
-            .unwrap_or(horta.created_at);
-
-        let minutos_passados = agora.signed_duration_since(ultima_atividade).num_minutes() as f64;
+        let minutos_passados = agora.signed_duration_since(ultima_atualizacao).num_minutes() as f64;
         let taxa_secagem_por_minuto = 0.05;
 
         (umidade_bd - (minutos_passados * taxa_secagem_por_minuto)).max(0.0)

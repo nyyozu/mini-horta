@@ -2,8 +2,8 @@
 const int sensorPin  = A0;
 const int bombaPin   = 7;
 const int luzPin     = 6;
-const int ledAmarelo = 13;
-const int ledVerde   = 12;
+const int ledAmarelo = 12;
+const int ledVerde   = 13;
 
 // PLANTA
 enum Planta { MANJERICAO, SALSINHA, HORTELA, ALECRIM };
@@ -20,7 +20,9 @@ unsigned long ultimoToggleLuz = 0;
 unsigned long ultimoCheck = 0;
 const unsigned long intervalo = 10000;
 bool bombaLigada   = false;
-unsigned long bombaManualFim = 0; // millis() quando a irrigação manual termina (0 = sem timer)
+unsigned long bombaManualFim     = 0;  // millis() quando a irrigação manual termina
+unsigned long ultimaIrrigacaoAuto = 0; // millis() da última irrigação automática
+const unsigned long COOLDOWN_AUTO = 60000UL; // 60s entre irrigações automáticas
 
 // ─────────────────────────────────────────────────────────────
 
@@ -53,7 +55,7 @@ void ligarLuz() {
   if (!luzLigada) {
     luzLigada = true;
     luzLigouEm = millis();
-    digitalWrite(luzPin, LOW);
+    digitalWrite(luzPin, HIGH);
   }
 }
 
@@ -62,7 +64,7 @@ void desligarLuz() {
     luzTotalHoje += millis() - luzLigouEm;
     luzLigada = false;
     luzLigouEm = 0;
-    digitalWrite(luzPin, HIGH);
+    digitalWrite(luzPin, LOW);
   }
 }
 
@@ -158,26 +160,31 @@ void loop() {
     getParametros(minU, maxU, nome);
     int umidade = lerUmidade();
 
-    if (!bombaLigada && umidade < minU)        bombaLigada = true;
-    if ( bombaLigada && umidade >= (minU + 5)) bombaLigada = false;
+    // Irrigação automática com cooldown de 60s para evitar spam
+    if (!bombaLigada && umidade < minU && bombaManualFim == 0) {
+      if (agora - ultimaIrrigacaoAuto >= COOLDOWN_AUTO) {
+        bombaLigada = true;
+        ultimaIrrigacaoAuto = agora;
+      }
+    }
+    if (bombaLigada && umidade >= (minU + 5) && bombaManualFim == 0) bombaLigada = false;
 
     if (bombaLigada) {
-      digitalWrite(bombaPin, LOW);
-      digitalWrite(ledAmarelo, LOW);
-      digitalWrite(ledVerde, HIGH);
-    } else {
       digitalWrite(bombaPin, HIGH);
       digitalWrite(ledAmarelo, HIGH);
       digitalWrite(ledVerde, LOW);
+    } else {
+      digitalWrite(bombaPin, LOW);
+      digitalWrite(ledAmarelo, LOW);
+      digitalWrite(ledVerde, HIGH);
     }
 
-    Serial.print("{\"plant_name\":\"");
-    Serial.print(nome);
-    Serial.print("\",\"humidity\":");
-    Serial.print((float)umidade, 1);
-    Serial.print(",\"light_lux\":");
-    Serial.print(luzTotalSegundos());
-    Serial.print(",\"luz_ligada\":");
-    Serial.println(luzLigada ? 1 : 0);
+    // Monta o JSON completo antes de enviar para evitar cortes no buffer
+    String json = "{\"plant_name\":\"" + nome + "\"";
+    json += ",\"humidity\":" + String((float)umidade, 1);
+    json += ",\"light_lux\":" + String(luzTotalSegundos());
+    json += ",\"luz_ligada\":" + String(luzLigada ? 1 : 0);
+    json += "}";
+    Serial.println(json);
   }
 }

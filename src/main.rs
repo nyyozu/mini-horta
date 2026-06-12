@@ -20,7 +20,7 @@ use tower_http::{
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{db::Database, routes::build_router, serial::SerialDaemon, state::AppState};
+use crate::{db::Database, routes::build_router, serial::{SerialDaemon, SerialCommand}, state::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,14 +37,12 @@ async fn main() -> anyhow::Result<()> {
     let database = Database::connect().await?;
     info!("Banco de dados conectado e migrations aplicadas");
 
-    // ── Criação do Canal Serial ────────────────────────────────────────────────
-    let (serial_tx, serial_rx) = tokio::sync::mpsc::channel(32);
+    let (serial_tx, serial_rx) = tokio::sync::mpsc::channel::<SerialCommand>(32);
     let state = AppState::new(database, serial_tx);
 
     // ── Daemon serial (Arduino) ────────────────────────────────────────────────
     let serial_state = state.clone();
     tokio::spawn(async move {
-        // Agora o Daemon recebe o canal de escuta (serial_rx)
         if let Err(e) = SerialDaemon::run(serial_state, serial_rx).await {
             tracing::error!("Daemon serial encerrou com erro: {e}");
         }
@@ -56,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         loop {
             let agora = chrono::Utc::now();
 
+            // Calcula quanto tempo falta para a próxima meia-noite UTC
             let proxima_meia_noite = (agora + chrono::Duration::days(1))
                 .date_naive()
                 .and_hms_opt(0, 0, 0)
@@ -74,12 +73,14 @@ async fn main() -> anyhow::Result<()> {
 
             tokio::time::sleep(espera).await;
 
+            // Fecha todos os períodos abertos
             if let Err(e) = reset_state.db().luz_fechar_todos_periodos().await {
                 tracing::error!("Erro no reset de luz à meia-noite: {e}");
             } else {
                 tracing::info!("Reset de luz à meia-noite concluído");
             }
 
+            // Aguarda 2s para não disparar duas vezes no mesmo segundo
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });

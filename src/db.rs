@@ -3,7 +3,7 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use uuid::Uuid;
 
 use crate::models::{
-    IrrigationLog, IrrigationTrigger, Plant, SensorReading, User, UserRole,
+    IrrigationLog, IrrigationTrigger, LuzLog, Plant, SensorReading, User, UserRole,
 };
 
 #[derive(Clone)]
@@ -642,6 +642,95 @@ impl Database {
         Ok(())
     }
 
+    /// Registra uma ação de luz (ligar/desligar) no log, à semelhança de insert_irrigation_log.
+    /// `token` é o valor aleatório gerado para plantas simuladas (não-Manjericão); None para Manjericão.
+    pub async fn insert_luz_log(
+        &self,
+        plant_id: Uuid,
+        acao: &str,
+        token: Option<f64>,
+        user_id: Option<Uuid>,
+    ) -> anyhow::Result<LuzLog> {
+        let id = Uuid::new_v4().to_string();
+        let plant_id_str = plant_id.to_string();
+        let user_id_str  = user_id.map(|u| u.to_string());
+        let now = Utc::now().to_rfc3339();
+
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO luz_logs (id, plant_id, acao, token, triggered_by_user_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            RETURNING
+                id         as "id!",
+                plant_id   as "plant_id!",
+                acao       as "acao!",
+                token,
+                created_at as "created_at!"
+            "#,
+            id, plant_id_str, acao, token, user_id_str, now
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let email = if let Some(uid) = user_id_str {
+            let u = sqlx::query!("SELECT email FROM users WHERE id = ?", uid)
+                .fetch_optional(&self.pool).await?;
+            u.map(|r| r.email)
+        } else {
+            None
+        };
+
+        Ok(LuzLog {
+            id: parse_uuid(&row.id)?,
+            plant_id: parse_uuid(&row.plant_id)?,
+            acao: row.acao,
+            token: row.token,
+            created_at: parse_dt(&row.created_at)?,
+            triggered_by_email: email,
+        })
+    }
+
+    /// Lista os últimos logs de ações de luz de uma planta (à semelhança de list_irrigation_logs).
+    pub async fn list_luz_logs(
+        &self,
+        plant_id: Uuid,
+        limit: i64,
+    ) -> anyhow::Result<Vec<LuzLog>> {
+        let plant_id_str = plant_id.to_string();
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                l.id         as "id!",
+                l.plant_id   as "plant_id!",
+                l.acao       as "acao!",
+                l.token,
+                l.created_at as "created_at!",
+                u.email      as "triggered_by_email?"
+            FROM luz_logs l
+            LEFT JOIN users u ON u.id = l.triggered_by_user_id
+            WHERE l.plant_id = ?
+            ORDER BY l.created_at DESC LIMIT ?
+            "#,
+            plant_id_str,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|r| {
+                Ok(LuzLog {
+                    id: parse_uuid(&r.id)?,
+                    plant_id: parse_uuid(&r.plant_id)?,
+                    acao: r.acao,
+                    token: r.token,
+                    created_at: parse_dt(&r.created_at)?,
+                    triggered_by_email: r.triggered_by_email,
+                })
+            })
+            .collect()
+    }
+
     /// Fecha o período de luz aberto da planta (luz desligou).
     pub async fn luz_fechar_periodo(&self, plant_id: Uuid) -> anyhow::Result<()> {
         let plant_id_str = plant_id.to_string();
@@ -766,6 +855,58 @@ impl Database {
         Ok(found)
     }
 
+    /// Inicializa o histórico de luz com um período já fechado e duração aleatória,
+    /// apenas se não houver nenhum registro ainda para a planta.
+    /// Duração entre 1s e luz_horas_dia * 3600s da planta.
+    pub async fn init_luz_historico(&self, plant_id: Uuid) -> anyhow::Result<()> {
+        let plant_id_str = plant_id.to_string();
+
+        // Verifica se já existe algum registro
+        let count = sqlx::query!(
+            r#"SELECT COUNT(*) as "n!" FROM luz_historico WHERE plant_id = ?"#,
+            plant_id_str
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        if count.n > 0 {
+            return Ok(());
+        }
+
+        // Busca a meta de luz da planta (luz_horas_dia)
+        let plant = sqlx::query!(
+            r#"SELECT luz_horas_dia as "luz_horas_dia!" FROM plants WHERE id = ?"#,
+            plant_id_str
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let meta_seg = plant.map(|p| (p.luz_horas_dia * 3600.0) as u64).unwrap_or(36000);
+
+        // Duração aleatória entre 1s e meta_seg
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as u64;
+        let duracao_sec = if meta_seg > 1 { 1 + (seed % (meta_seg - 1)) } else { 1 };
+        let duracao_sec = duracao_sec as i64;
+
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        let ligou_em    = (now - chrono::Duration::seconds(duracao_sec)).to_rfc3339();
+        let desligou_em = now.to_rfc3339();
+
+        sqlx::query!(
+            r#"INSERT INTO luz_historico (id, plant_id, ligou_em, desligou_em, duracao_sec)
+               VALUES (?, ?, ?, ?, ?)"#,
+            id, plant_id_str, ligou_em, desligou_em, duracao_sec
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Atualiza a planta associada a uma horta.
     pub async fn update_horta_plant(&self, horta_id: Uuid, plant_id: Uuid) -> anyhow::Result<()> {
         let horta_id_str = horta_id.to_string();
@@ -841,6 +982,19 @@ impl Database {
     }
 
     // ── Status de umidade por planta ──────────────────────────────────────────
+
+    /// Retorna a umidade atual da planta e quando foi atualizada pela última vez.
+    pub async fn get_umidade_status_com_tempo(&self, plant_id: Uuid) -> anyhow::Result<Option<(f64, chrono::DateTime<chrono::Utc>)>> {
+        let plant_id_str = plant_id.to_string();
+        let row = sqlx::query!(
+            r#"SELECT umidade, updated_at as "updated_at!" FROM plant_umidade_status WHERE plant_id = ?"#,
+            plant_id_str
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| parse_dt(&r.updated_at).map(|t| (r.umidade, t)))
+            .transpose()
+    }
 
     /// Retorna a umidade atual da planta.
     /// Se não existir registro ainda, retorna None.
@@ -963,6 +1117,14 @@ impl Database {
             created_by: parse_uuid(&row.created_by)?,
             created_at: parse_dt(&row.created_at)?,
         })
+    }
+
+    pub async fn delete_plant(&self, id: Uuid) -> anyhow::Result<()> {
+        let id_str = id.to_string();
+        sqlx::query!("DELETE FROM plants WHERE id = ?", id_str)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
 }

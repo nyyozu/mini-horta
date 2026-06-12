@@ -191,3 +191,16 @@ pub struct HortaResponse {
     pub owner_id: Uuid,
     pub created_at: String,
 }
+
+// ── Log de luz ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LuzLog {
+    pub id: Uuid,
+    pub plant_id: Uuid,
+    pub acao: String, // "ligar" | "desligar"
+    pub token: Option<f64>,
+    pub created_at: DateTime<Utc>,
+    /// E-mail de quem disparou.
+    pub triggered_by_email: Option<String>,
+}

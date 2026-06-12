@@ -3,16 +3,21 @@
 // Controle de luz — acessível a qualquer usuário autenticado
 // que seja dono da horta, ou a admins para qualquer horta.
 
-use axum::{Json, extract::{Path, State}};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::{
     auth::AuthUser,
     errors::{AppError, AppResult},
-    models::UserRole,
+    models::{LuzLog, UserRole},
+    serial::SerialCommand,
     state::AppState,
 };
 
@@ -24,14 +29,13 @@ pub async fn luz_ligar(
 ) -> AppResult<Json<Value>> {
     let horta = verificar_acesso(&state, &code, &user).await?;
 
+    let manjericao = state.db().find_plant_by_normalized_name("manjericao").await?;
+    let is_manjericao = manjericao.as_ref().map(|m| m.id) == Some(horta.plant_id);
+
     // Usuários comuns têm cooldown de 30s no Manjericão (planta física)
     // para evitar spam de comandos e danos ao hardware
-    if user.0.role != UserRole::Admin {
-        if let Some(manjericao) = state.db().find_plant_by_normalized_name("manjericao").await? {
-            if horta.plant_id == manjericao.id {
-                verificar_cooldown_luz(&state, horta.id).await?;
-            }
-        }
+    if user.0.role != UserRole::Admin && is_manjericao {
+        verificar_cooldown_luz(&state, horta.id).await?;
     }
 
     // Verificar limite diário de luz da planta
@@ -49,19 +53,39 @@ pub async fn luz_ligar(
         )));
     }
 
-    // Tenta enviar pelo Arduino; se offline, apenas salva no banco
-    match enviar_serial("LUZ_ON") {
-        Ok(()) => tracing::info!(horta = code, "LUZ_ON enviado via serial"),
-        Err(_)  => tracing::warn!(horta = code, "Arduino offline — estado salvo só no banco"),
+    let mut token: Option<f64> = None;
+
+    if is_manjericao {
+        // Envia pelo canal do daemon serial (não abre a porta diretamente)
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let _ = state.serial_tx().send(SerialCommand { cmd: "LUZ_ON\n".to_string(), reply: reply_tx }).await;
+        match reply_rx.await.unwrap_or(false) {
+            true  => tracing::info!(horta = code, "LUZ_ON enviado via serial"),
+            false => tracing::warn!(horta = code, "Arduino offline — estado salvo só no banco"),
+        }
+    } else {
+        // Plantas que não são o Manjericão não têm hardware próprio:
+        // apenas atualizamos o contador/temporizador delas no banco,
+        // gerando um token aleatório (mesmo padrão usado na rega).
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+        token = Some(7.0 + (seed % 8_000_000) as f64 / 1_000_000.0);
+        tracing::info!(horta = code, token = ?token, "Luz simulada acionada (sem hardware)");
     }
+
     let _ = state.db().set_luz_ligada(horta.plant_id, true).await;
     if let Err(e) = state.db().luz_abrir_periodo(horta.plant_id).await {
         tracing::error!("Erro ao abrir período de luz: {e}");
     }
-    if user.0.role != UserRole::Admin {
+    if user.0.role != UserRole::Admin && is_manjericao {
         let _ = state.db().set_luz_cooldown(horta.id).await;
     }
-    Ok(Json(json!({ "ok": true, "acao": "ligar", "horta": code })))
+
+    if let Err(e) = state.db().insert_luz_log(horta.plant_id, "ligar", token, Some(user.0.sub)).await {
+        tracing::error!("Erro ao registrar log de luz: {e}");
+    }
+
+    Ok(Json(json!({ "ok": true, "acao": "ligar", "horta": code, "token": token })))
 }
 
 /// POST /admin/luz/:code/desligar
@@ -72,15 +96,35 @@ pub async fn luz_desligar(
 ) -> AppResult<Json<Value>> {
     let horta = verificar_acesso(&state, &code, &user).await?;
 
-    match enviar_serial("LUZ_OFF") {
-        Ok(()) => tracing::info!(horta = code, "LUZ_OFF enviado via serial"),
-        Err(_)  => tracing::warn!(horta = code, "Arduino offline — estado salvo só no banco"),
+    let manjericao = state.db().find_plant_by_normalized_name("manjericao").await?;
+    let is_manjericao = manjericao.as_ref().map(|m| m.id) == Some(horta.plant_id);
+
+    let mut token: Option<f64> = None;
+
+    if is_manjericao {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let _ = state.serial_tx().send(SerialCommand { cmd: "LUZ_OFF\n".to_string(), reply: reply_tx }).await;
+        match reply_rx.await.unwrap_or(false) {
+            true  => tracing::info!(horta = code, "LUZ_OFF enviado via serial"),
+            false => tracing::warn!(horta = code, "Arduino offline — estado salvo só no banco"),
+        }
+    } else {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+        token = Some(7.0 + (seed % 8_000_000) as f64 / 1_000_000.0);
+        tracing::info!(horta = code, token = ?token, "Luz simulada desligada (sem hardware)");
     }
+
     let _ = state.db().set_luz_ligada(horta.plant_id, false).await;
     if let Err(e) = state.db().luz_fechar_periodo(horta.plant_id).await {
         tracing::error!("Erro ao fechar período de luz: {e}");
     }
-    Ok(Json(json!({ "ok": true, "acao": "desligar", "horta": code })))
+
+    if let Err(e) = state.db().insert_luz_log(horta.plant_id, "desligar", token, Some(user.0.sub)).await {
+        tracing::error!("Erro ao registrar log de luz: {e}");
+    }
+
+    Ok(Json(json!({ "ok": true, "acao": "desligar", "horta": code, "token": token })))
 }
 
 /// GET /admin/luz/:code/historico?dias=7
@@ -105,6 +149,26 @@ pub async fn luz_historico(
         "hoje_sec":  hoje,
         "historico": historico,
     })))
+}
+
+#[derive(Deserialize)]
+pub struct LuzLogsQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+
+fn default_limit() -> i64 { 20 }
+
+/// GET /admin/luz/:plant_id/logs?limit=20
+pub async fn luz_logs(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(plant_id): Path<Uuid>,
+    Query(params): Query<LuzLogsQuery>,
+) -> AppResult<Json<Vec<LuzLog>>> {
+    let limit = params.limit.clamp(1, 200);
+    let logs = state.db().list_luz_logs(plant_id, limit).await?;
+    Ok(Json(logs))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -143,28 +207,4 @@ async fn verificar_acesso(
     }
 
     Ok(horta)
-}
-
-fn enviar_serial(cmd: &str) -> AppResult<()> {
-    let port_name = std::env::var("SERIAL_PORT")
-        .unwrap_or_else(|_| "/dev/ttyUSB0".to_string());
-    let baud_rate: u32 = std::env::var("SERIAL_BAUD")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(9600);
-
-    let cmd_str = format!("{}\n", cmd);
-    let result = std::panic::catch_unwind(|| {
-        let mut port = serialport::new(&port_name, baud_rate)
-            .timeout(std::time::Duration::from_millis(2000))
-            .open()?;
-        use std::io::Write;
-        port.write_all(cmd_str.as_bytes())?;
-        port.flush()?;
-        Ok::<(), anyhow::Error>(())
-    });
-
-    match result {
-        Ok(Ok(())) => { tracing::info!(cmd = cmd, "Comando serial enviado"); Ok(()) }
-        Ok(Err(e)) => Err(AppError::Internal(anyhow::anyhow!("Serial: {e}"))),
-        Err(_)     => Err(AppError::Internal(anyhow::anyhow!("Porta serial indisponível"))),
-    }
 }

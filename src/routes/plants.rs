@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use uuid::Uuid;
 
@@ -8,6 +9,7 @@ use crate::{
     auth::{AdminUser, AuthUser},
     errors::{AppError, AppResult},
     models::{CreatePlantRequest, UpdatePlantRequest, Plant},
+    routes::util::normalize_plant_name,
     state::AppState,
 };
 
@@ -48,6 +50,22 @@ pub async fn create(
     if req.name.is_empty() {
         return Err(AppError::BadRequest("Nome da planta é obrigatório".to_string()));
     }
+
+    // Limite de tamanho para o campo de benefícios/descrição
+    if let Some(desc) = &req.description {
+        if desc.chars().count() > 300 {
+            return Err(AppError::BadRequest(
+                "Benefícios deve ter no máximo 300 caracteres".to_string(),
+            ));
+        }
+    }
+
+    // Impede criar uma planta com nome já existente (normalizado, ignora acentos/caixa)
+    let normalized = normalize_plant_name(&req.name);
+    if state.db().find_plant_by_normalized_name(&normalized).await?.is_some() {
+        return Err(AppError::BadRequest(format!("Planta '{}' já existe", req.name)));
+    }
+
     if req.humidity_min >= req.humidity_max {
         return Err(AppError::BadRequest(
             "humidity_min deve ser menor que humidity_max".to_string(),
@@ -89,6 +107,16 @@ pub async fn update(
     if req.name.is_empty() {
         return Err(AppError::BadRequest("Nome da planta é obrigatório".to_string()));
     }
+
+    // Limite de tamanho para o campo de benefícios/descrição
+    if let Some(desc) = &req.description {
+        if desc.chars().count() > 300 {
+            return Err(AppError::BadRequest(
+                "Benefícios deve ter no máximo 300 caracteres".to_string(),
+            ));
+        }
+    }
+
     if req.humidity_min >= req.humidity_max {
         return Err(AppError::BadRequest(
             "humidity_min deve ser menor que humidity_max".to_string(),
@@ -113,4 +141,17 @@ pub async fn update(
         .await?;
 
     Ok(Json(plant))
+}
+/// DELETE /plants/:id — somente admin pode excluir plantas
+pub async fn delete(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    state.db().get_plant(id).await?
+        .ok_or_else(|| AppError::NotFound(format!("Planta {id} não encontrada")))?;
+
+    state.db().delete_plant(id).await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

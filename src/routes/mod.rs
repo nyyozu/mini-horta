@@ -7,6 +7,8 @@ pub mod sensors;
 pub mod irrigation;
 pub mod ws;
 
+pub mod util;
+
 use axum::{Router, routing::{get, post}};
 use tower_http::services::ServeDir;
 use crate::state::AppState;
@@ -34,7 +36,7 @@ fn auth_routes() -> Router<AppState> {
 fn plants_routes() -> Router<AppState> {
     Router::new()
         .route("/",    get(plants::list).post(plants::create))
-        .route("/:id", get(plants::get_one).put(plants::update))
+        .route("/:id", get(plants::get_one).put(plants::update).delete(plants::delete))
 }
 
 fn sensors_routes() -> Router<AppState> {
@@ -53,6 +55,7 @@ fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/luz/:code/ligar",    post(admin::luz_ligar))
         .route("/luz/:code/desligar", post(admin::luz_desligar))
+        .route("/luz/:plant_id/logs", get(admin::luz_logs))
 }
 
 fn hortas_routes() -> Router<AppState> {
